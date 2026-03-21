@@ -12,7 +12,6 @@ application {
 
 repositories {
     mavenCentral()
-    maven("https://jitpack.io")
 }
 
 dependencies {
@@ -22,9 +21,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
     implementation("ch.qos.logback:logback-classic:1.4.14")
-    
-    // Cloudstream Core Dependency to support native CSX plugins
-    implementation("com.github.recloudstream:cloudstream:pre-release")
+    implementation("org.json:json:20230227")
 }
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
