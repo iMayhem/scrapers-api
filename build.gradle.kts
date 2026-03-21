@@ -24,7 +24,7 @@ dependencies {
     implementation("ch.qos.logback:logback-classic:1.4.14")
     
     // Cloudstream Core Dependency to support native CSX plugins
-    implementation("com.github.recloudstream:cloudstream:prerelease")
+    implementation("com.github.recloudstream:cloudstream:pre-release")
 }
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
