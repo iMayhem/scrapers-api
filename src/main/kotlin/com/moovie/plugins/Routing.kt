@@ -79,16 +79,42 @@ fun Application.configureRouting() {
             if (playsrcStreamUrl != null) {
                 // Return exactly what your TypeScript app expects from `runAll`
                 val responseJson = JSONObject().apply {
-                    put("provider", "CineStream (Native Port)")
+                    put("provider", "Kotlin CSX Aggregator")
                     put("status", "success")
                     put("stream", JSONArray().apply {
+                        // Server 1: Madplay (Raw M3U8)
                         put(JSONObject().apply {
+                            put("server", "Madplay HLS")
                             put("url", playsrcStreamUrl)
                             put("quality", "HLS")
                             put("type", "hls")
                             if (playsrcHeaders.isNotEmpty()) {
                                 put("headers", JSONObject(playsrcHeaders))
                             }
+                        })
+                        
+                        // Server 2: AutoEmbed (Iframe)
+                        put(JSONObject().apply {
+                            put("server", "AutoEmbed Server 2")
+                            put("url", if (season == null) "https://autoembed.co/movie/tmdb/$tmdbId" else "https://autoembed.co/tv/tmdb/$tmdbId-$season-$episode")
+                            put("quality", "Unknown")
+                            put("type", "iframe")
+                        })
+
+                        // Server 3: VidLink (Iframe)
+                        put(JSONObject().apply {
+                            put("server", "VidLink Server 3")
+                            put("url", if (season == null) "https://vidlink.pro/movie/$tmdbId" else "https://vidlink.pro/tv/$tmdbId/$season/$episode")
+                            put("quality", "1080p")
+                            put("type", "iframe")
+                        })
+                        
+                        // Server 4: Vidsrc.in (Iframe)
+                        put(JSONObject().apply {
+                            put("server", "Vidsrc Server 4")
+                            put("url", if (season == null) "https://vidsrc.in/embed/movie/$tmdbId" else "https://vidsrc.in/embed/tv/$tmdbId/$season/$episode")
+                            put("quality", "1080p")
+                            put("type", "iframe")
                         })
                     })
                 }
