@@ -119,7 +119,31 @@ fun Application.configureRouting() {
             addStream("Gramcinema", "https://gramcinema.com/?s=$tmdbId", "iframe")
 
             // ═══════════════════════════════════════════════
-            // 3. UNIVERSAL AGGREGATORS & IFRAMES
+            // 3. WAVE 5: High-Quality Direct Sources
+            // ═══════════════════════════════════════════════
+            // MovieBox / StreamBox
+            try {
+                val boxBase = "https://vidjoy.pro/embed/api/fastfetch"
+                val bUrl = if (season == null) "$boxBase/$tmdbId?sr=0" else "$boxBase/$tmdbId/$season/$episode?sr=0"
+                val bResp = client.newCall(Request.Builder().url(bUrl).header("User-Agent", USER_AGENT).build()).execute()
+                if (bResp.isSuccessful) {
+                    val bData = JSONObject(bResp.body?.string() ?: "{}")
+                    val bSrcs = bData.optJSONArray("url") ?: JSONArray()
+                    val bRef = bData.optJSONObject("headers")?.optString("Referer", "") ?: ""
+                    val bHeaders = if (bRef.isNotEmpty()) mapOf("Referer" to bRef) else null
+                    
+                    for (i in 0 until bSrcs.length()) {
+                        val s = bSrcs.getJSONObject(i)
+                        val su = s.optString("link", "")
+                        val res = s.optString("resulation", "Auto")
+                        val st = if (su.contains(".m3u8")) "hls" else "mp4"
+                        if (su.isNotEmpty()) addStream("MovieBox [$res]", su, st, res, bHeaders)
+                    }
+                }
+            } catch (_: Exception) {}
+
+            // ═══════════════════════════════════════════════
+            // 4. WAVE 6: UNIVERSAL AGGREGATORS & IFRAMES
             // ═══════════════════════════════════════════════
             val fallbacks = mapOf(
                 "Vidsrc.to" to "https://vidsrc.to/embed/$mediaType/$id",
