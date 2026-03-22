@@ -629,7 +629,7 @@ object Settings {
         }
     }
 
-    fun getConcurrency(): Int = 10
+    fun getConcurrency(): Int = 20
     val allowDownloadLinks: Boolean = true
     
     val activeProviderOrder: List<String> get() {

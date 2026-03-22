@@ -21,6 +21,8 @@ import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 import java.nio.charset.StandardCharsets
 import java.net.URLEncoder
+import kotlinx.coroutines.*
+import java.util.Collections
 
 private const val TMDB_API_KEY = "f02a0c39f2e7a175fec9f673ff440c4e"
 
@@ -58,7 +60,7 @@ fun Application.configureRouting() {
                 if (resp.isSuccessful) imdbId = JSONObject(resp.body?.string() ?: "").optString("imdb_id", null)
             } catch (_: Exception) {}
 
-            val streams = JSONArray()
+            val streamsList = Collections.synchronizedList(mutableListOf<JSONObject>())
             val debugMsg = JSONObject()
             val id = if (imdbId.isNullOrEmpty()) tmdbId else imdbId
             
@@ -66,220 +68,198 @@ fun Application.configureRouting() {
 
             fun addStream(server: String, url: String, type: String = "hls", quality: String = "Auto", headers: Map<String, String>? = null) {
                 if (url.isBlank()) return
-                streams.put(JSONObject().apply {
+                streamsList.add(JSONObject().apply {
                     put("server", server); put("url", url); put("quality", quality); put("type", type)
                     if (headers != null) put("headers", JSONObject(headers))
                 })
             }
 
-            // ═══════════════════════════════════════════════
-            // 1. CORE & PREMIUM (Netflix, Madplay, CinemaOS)
-            // ═══════════════════════════════════════════════
-            // Netflix Mirror
-            if (Settings.isEnabled("p_netflix")) {
-                try {
-                    val main = "https://nfmirror.com"; val mir2 = "https://nfmirror2.org"
-                    val finalId = if (season == null) id else "$id:$season:$episode"
-                    client.newCall(Request.Builder().url("$main/").build()).execute()
-                    val hResp = client.newCall(Request.Builder().url("$main/play.php").post(FormBody.Builder().add("id", finalId).build()).header("X-Requested-With", "XMLHttpRequest").header("Referer", "$main/").build()).execute()
-                    val h = JSONObject(hResp.body?.string() ?: "{}").optString("h", "")
-                    if (h.isNotEmpty()) {
-                        val tResp = client.newCall(Request.Builder().url("$mir2/playlist.php?id=$finalId&t=$h&tm=${System.currentTimeMillis()/1000}").header("Referer", "$main/").build()).execute()
-                        val pJson = JSONArray(tResp.body?.string() ?: "[]")
-                        if (pJson.length() > 0) {
-                            val srcs = pJson.getJSONObject(0).optJSONArray("sources") ?: JSONArray()
-                            for (i in 0 until srcs.length()) {
-                                val s = srcs.getJSONObject(i); val su = s.optString("file", "")
-                                if (su.startsWith("/")) addStream("Netflix Mirror", "$mir2$su", "hls")
+            coroutineScope {
+                val tasks = mutableListOf<Deferred<Unit>>()
+
+                // 1. Core & Premium
+                tasks.add(async(Dispatchers.IO) {
+                    if (Settings.isEnabled("p_netflix")) {
+                        try {
+                            val main = "https://nfmirror.com"; val mir2 = "https://nfmirror2.org"
+                            val finalId = if (season == null) id else "$id:$season:$episode"
+                            client.newCall(Request.Builder().url("$main/").build()).execute()
+                            val hResp = client.newCall(Request.Builder().url("$main/play.php").post(FormBody.Builder().add("id", finalId).build()).header("X-Requested-With", "XMLHttpRequest").header("Referer", "$main/").build()).execute()
+                            val h = JSONObject(hResp.body?.string() ?: "{}").optString("h", "")
+                            if (h.isNotEmpty()) {
+                                val tResp = client.newCall(Request.Builder().url("$mir2/playlist.php?id=$finalId&t=$h&tm=${System.currentTimeMillis()/1000}").header("Referer", "$main/").build()).execute()
+                                val pJson = JSONArray(tResp.body?.string() ?: "[]")
+                                if (pJson.length() > 0) {
+                                    val srcs = pJson.getJSONObject(0).optJSONArray("sources") ?: JSONArray()
+                                    for (i in 0 until srcs.length()) {
+                                        val s = srcs.getJSONObject(i); val su = s.optString("file", "")
+                                        if (su.startsWith("/")) addStream("Netflix Mirror", "$mir2$su", "hls")
+                                    }
+                                }
+                            }
+                        } catch (_: Exception) {}
+                    }
+                })
+
+                tasks.add(async(Dispatchers.IO) {
+                    if (Settings.isEnabled("p_madplaycdn")) {
+                        addStream("Madplay CDN", if (season == null) "https://cdn.madplay.site/api/hls/unknown/$tmdbId/master.m3u8" else "https://cdn.madplay.site/api/hls/unknown/$tmdbId/season_$season/episode_$episode/master.m3u8", "hls")
+                    }
+                })
+
+                tasks.add(async(Dispatchers.IO) {
+                    if (Settings.isEnabled("p_cinemaos")) {
+                        try {
+                            val secret = cinemaOSGenerateHash(tmdbId.toInt(), imdbId, season?.toInt(), episode?.toInt())
+                            val cUrl = if (season == null) "https://cinemaos.tech/api/providerv3?type=movie&tmdbId=$tmdbId&imdbId=$imdbId&secret=$secret" else "https://cinemaos.tech/api/providerv3?type=tv&tmdbId=$tmdbId&imdbId=$imdbId&seasonId=$season&episodeId=$episode&secret=$secret"
+                            val cResp = client.newCall(Request.Builder().url(cUrl).header("User-Agent", USER_AGENT).build()).execute()
+                            cinemaOSDecryptResponse(JSONObject(cResp.body?.string() ?: "{}").optString("data", ""))?.let { dec ->
+                                val data = JSONArray(dec)
+                                for (i in 0 until data.length()) {
+                                    val it = data.getJSONObject(i); val ur = it.optString("url", "")
+                                    if (ur.isNotEmpty()) addStream("CinemaOS [${it.optString("name")}]", "https://cinemaos.tech$ur")
+                                }
+                            }
+                        } catch (_: Exception) {}
+                    }
+                })
+
+                // 2. Wave 4: Anime & Regional (Parallelized individual ones)
+                if (Settings.isEnabled("p_sudatchi")) tasks.add(async(Dispatchers.IO) { addStream("Sudatchi", "https://sudatchi.com/api/streams?id=$tmdbId", "hls") })
+                if (Settings.isEnabled("p_allanime")) tasks.add(async(Dispatchers.IO) { addStream("AllAnime", "https://allmanga.to/search?q=$tmdbId", "iframe") })
+                if (Settings.isEnabled("p_animepahe")) tasks.add(async(Dispatchers.IO) { addStream("AnimePahe", "https://animepahe.ru/search?q=$tmdbId", "iframe") })
+                if (Settings.isEnabled("p_gojo")) tasks.add(async(Dispatchers.IO) { addStream("Animetsu", "https://animetsu.cc/search/$tmdbId", "iframe") })
+                if (Settings.isEnabled("p_flixindia")) tasks.add(async(Dispatchers.IO) { addStream("FlixIndia", "https://flixindia.xyz/?s=$tmdbId", "iframe") })
+                if (Settings.isEnabled("p_rogmovies")) tasks.add(async(Dispatchers.IO) { addStream("RogMovies", "https://rogmovies.fun/?s=$tmdbId", "iframe") })
+                if (Settings.isEnabled("p_bollywood")) tasks.add(async(Dispatchers.IO) { addStream("Gramcinema", "https://gramcinema.com/?s=$tmdbId", "iframe") })
+
+                // 3. Wave 5: MovieBox
+                tasks.add(async(Dispatchers.IO) {
+                    if (Settings.isEnabled("p_moviebox")) {
+                        try {
+                            val boxBase = "https://vidjoy.pro/embed/api/fastfetch"
+                            val targetUrl = if (season == null) "$boxBase/$tmdbId?sr=0" else "$boxBase/$tmdbId/$season/$episode?sr=0"
+                            
+                            var body = ""
+                            try {
+                                val dResp = client.newCall(Request.Builder().url(targetUrl)
+                                    .header("User-Agent", USER_AGENT)
+                                    .header("Accept", "application/json, text/plain, */*")
+                                    .header("Referer", "https://vidjoy.pro/").build()).execute()
+                                body = dResp.body?.string() ?: ""
+                            } catch (_: Exception) {}
+
+                            if (!body.startsWith("{")) {
+                                try {
+                                    val mUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1"
+                                    val mResp = client.newCall(Request.Builder().url(targetUrl).header("User-Agent", mUA).build()).execute()
+                                    body = mResp.body?.string() ?: ""
+                                } catch (_: Exception) {}
+                            }
+
+                            if (body.startsWith("{")) {
+                                val bData = JSONObject(body)
+                                val bSrcs = bData.optJSONArray("url") ?: JSONArray()
+                                val bRef = bData.optJSONObject("headers")?.optString("Referer", "") ?: ""
+                                val bHeaders = if (bRef.isNotEmpty()) mapOf("Referer" to bRef) else null
+                                
+                                for (i in 0 until bSrcs.length()) {
+                                    val s = bSrcs.getJSONObject(i)
+                                    val su = s.optString("link", "")
+                                    val res = s.optString("resulation", "Auto")
+                                    val st = if (su.contains(".m3u8")) "hls" else "mp4"
+                                    if (su.isNotEmpty()) addStream("MovieBox [$res]", su, st, res, bHeaders)
+                                }
+                            }
+                        } catch (_: Exception) {}
+                    }
+                })
+
+                // 4. Wave 6: CineStream
+                tasks.add(async(Dispatchers.IO) {
+                    try {
+                        val cineStream = CineStreamProvider()
+                        val passData = AppUtils.toJson(CineStreamProvider.PassData(id!!, mediaType))
+                        val loadResponse = cineStream.load(passData)
+                        if (loadResponse is MovieLoadResponse) {
+                            cineStream.loadLinks(loadResponse.dataUrl!!, false, { _ -> }) { link ->
+                                val st = when (link.type) {
+                                    ExtractorLinkType.M3U8 -> "hls"
+                                    ExtractorLinkType.DASH -> "dash"
+                                    else -> if (link.url.contains(".m3u8")) "hls" else "mp4"
+                                }
+                                addStream("CineStream [${link.name}]", link.url, st, link.quality.toString(), link.headers)
+                            }
+                        } else if (loadResponse is TvSeriesLoadResponse) {
+                            val ep = loadResponse.episodes.find { it.season == season?.toInt() && it.episode == episode?.toInt() }
+                            if (ep != null) {
+                                cineStream.loadLinks(ep.data, false, { _ -> }) { link ->
+                                    val st = when (link.type) {
+                                        ExtractorLinkType.M3U8 -> "hls"
+                                        ExtractorLinkType.DASH -> "dash"
+                                        else -> if (link.url.contains(".m3u8")) "hls" else "mp4"
+                                    }
+                                    addStream("CineStream [${link.name}]", link.url, st, link.quality.toString(), link.headers)
+                                }
                             }
                         }
+                    } catch (e: Exception) {
+                        addDebug("cinestream_err", e.message ?: "Unknown")
                     }
-                } catch (_: Exception) {}
-            }
+                    Unit
+                })
 
-            // Madplay & CinemaOS are handled by CineStreamProvider below, 
-            // but these hardcoded ones are here for "legacy" or priority?
-            // Let's at least wrap them.
-            if (Settings.isEnabled("p_madplaycdn")) {
-                addStream("Madplay CDN", if (season == null) "https://cdn.madplay.site/api/hls/unknown/$tmdbId/master.m3u8" else "https://cdn.madplay.site/api/hls/unknown/$tmdbId/season_$season/episode_$episode/master.m3u8", "hls")
-            }
-            
-            if (Settings.isEnabled("p_cinemaos")) {
-                try {
-                    val secret = cinemaOSGenerateHash(tmdbId.toInt(), imdbId, season?.toInt(), episode?.toInt())
-                    val cUrl = if (season == null) "https://cinemaos.tech/api/providerv3?type=movie&tmdbId=$tmdbId&imdbId=$imdbId&secret=$secret" else "https://cinemaos.tech/api/providerv3?type=tv&tmdbId=$tmdbId&imdbId=$imdbId&seasonId=$season&episodeId=$episode&secret=$secret"
-                    val cResp = client.newCall(Request.Builder().url(cUrl).header("User-Agent", USER_AGENT).build()).execute()
-                    cinemaOSDecryptResponse(JSONObject(cResp.body?.string() ?: "{}").optString("data", ""))?.let { dec ->
-                        val data = JSONArray(dec)
-                        for (i in 0 until data.length()) {
-                            val it = data.getJSONObject(i); val ur = it.optString("url", "")
-                            if (ur.isNotEmpty()) addStream("CinemaOS [${it.optString("name")}]", "https://cinemaos.tech$ur")
+                // 5. Fallbacks
+                tasks.add(async(Dispatchers.IO) {
+                    val fallbacks = mapOf(
+                        "Vidsrc.to" to "https://vidsrc.to/embed/$mediaType/$id",
+                        "Vidsrc.xyz" to "https://vidsrc.xyz/embed/$mediaType/$id",
+                        "Vidsrc.net" to "https://vidsrc.net/embed/$mediaType/$id",
+                        "RiveStream" to "https://rivestream.com/embed/$mediaType/$id",
+                        "Embed.su" to "https://embed.su/embed/$mediaType/$id",
+                        "VidLink" to "https://vidlink.pro/$mediaType/$id",
+                        "SuperEmbed" to "https://multiembed.mov/directstream.php?video_id=$tmdbId&tmdb=1",
+                        "2Embed" to "https://www.2embed.cc/embed$mediaType/$tmdbId",
+                        "AutoEmbed" to "https://autoembed.co/$mediaType/tmdb/$tmdbId"
+                    )
+                    val fallbackKeys = mapOf(
+                        "Vidsrc.to" to "p_vidsrccc", "Vidsrc.xyz" to "p_vidsrccc", "Vidsrc.net" to "p_vidsrccc",
+                        "RiveStream" to "p_vidsrccc", "Embed.su" to "p_vidsrccc", "VidLink" to "p_vidlink",
+                        "SuperEmbed" to "p_vidsrccc", "2Embed" to "p_2embed", "AutoEmbed" to "p_autoembed"
+                    )
+                    fallbacks.forEach { (n, u) -> 
+                        if (Settings.isEnabled(fallbackKeys[n] ?: "p_vidsrccc")) addStream(n, u, "iframe")
+                    }
+                })
+
+                // 6. Stremio Addon Bridges
+                tasks.add(async(Dispatchers.IO) {
+                    val addons = mapOf("WebStreamr" to "https://webstreamr.hayd.uk", "Streamvix" to "https://streamvix.hayd.uk", "NoTorrent" to "https://addon-osvh.onrender.com")
+                    val addonKeys = mapOf("WebStreamr" to "p_webstreamr", "Streamvix" to "p_streamvix", "NoTorrent" to "p_notorrent")
+                    addons.forEach { (n, b) ->
+                        if (Settings.isEnabled(addonKeys[n] ?: "")) {
+                            try {
+                                val url = if (season == null) "$b/stream/movie/$id.json" else "$b/stream/tv/$id:$season:$episode.json"
+                                val resp = client.newCall(Request.Builder().url(url).build()).execute()
+                                if (resp.isSuccessful) {
+                                    val sArr = JSONObject(resp.body?.string() ?: "{}").optJSONArray("streams") ?: JSONArray()
+                                    for (i in 0 until sArr.length()) {
+                                        val s = sArr.getJSONObject(i); val su = s.optString("url", "")
+                                        if (su.isNotBlank()) addStream("$n ${s.optString("name")}", su, if (su.contains(".m3u8")) "hls" else "mp4")
+                                    }
+                                }
+                            } catch (_: Exception) {}
                         }
                     }
-                } catch (_: Exception) {}
-            }
+                })
 
-            // ═══════════════════════════════════════════════
-            // 2. WAVE 4: Anime Mega-Trackers & Regional
-            // ═══════════════════════════════════════════════
-            if (Settings.isEnabled("p_sudatchi")) addStream("Sudatchi", "https://sudatchi.com/api/streams?id=$tmdbId", "hls")
-            if (Settings.isEnabled("p_allanime")) addStream("AllAnime", "https://allmanga.to/search?q=$tmdbId", "iframe")
-            if (Settings.isEnabled("p_animepahe")) addStream("AnimePahe", "https://animepahe.ru/search?q=$tmdbId", "iframe")
-            if (Settings.isEnabled("p_gojo")) addStream("Animetsu", "https://animetsu.cc/search/$tmdbId", "iframe")
-            if (Settings.isEnabled("p_flixindia")) addStream("FlixIndia", "https://flixindia.xyz/?s=$tmdbId", "iframe")
-            if (Settings.isEnabled("p_rogmovies")) addStream("RogMovies", "https://rogmovies.fun/?s=$tmdbId", "iframe")
-            if (Settings.isEnabled("p_bollywood")) addStream("Gramcinema", "https://gramcinema.com/?s=$tmdbId", "iframe")
-
-            // ═══════════════════════════════════════════════
-            // 3. WAVE 5: High-Quality Direct Sources
-            // ═══════════════════════════════════════════════
-            // MovieBox / StreamBox
-            if (Settings.isEnabled("p_moviebox")) {
-                try {
-                val boxBase = "https://vidjoy.pro/embed/api/fastfetch"
-                val targetUrl = if (season == null) "$boxBase/$tmdbId?sr=0" else "$boxBase/$tmdbId/$season/$episode?sr=0"
-                addDebug("moviebox_url", targetUrl)
-                
-                var body = ""
-                
-                // Attempt 1: Direct (Desktop)
-                try {
-                    val dResp = client.newCall(Request.Builder().url(targetUrl)
-                        .header("User-Agent", USER_AGENT)
-                        .header("Accept", "application/json, text/plain, */*")
-                        .header("Referer", "https://vidjoy.pro/").build()).execute()
-                    body = dResp.body?.string() ?: ""
-                    if (body.startsWith("{")) addDebug("moviebox_method", "Direct (Desktop)")
-                } catch (_: Exception) {}
-
-                // Attempt 2: Direct (Mobile)
-                if (!body.startsWith("{")) {
-                    try {
-                        val mUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1"
-                        val mResp = client.newCall(Request.Builder().url(targetUrl).header("User-Agent", mUA).build()).execute()
-                        body = mResp.body?.string() ?: ""
-                        if (body.startsWith("{")) addDebug("moviebox_method", "Direct (Mobile)")
-                    } catch (_: Exception) {}
-                }
-
-                // Attempt 3: Private Proxy
-                if (!body.startsWith("{")) {
-                    try {
-                        val proxiedUrl = "https://moovie-proxy.sujeetunbeatable.workers.dev/?url=${URLEncoder.encode(targetUrl, "UTF-8")}"
-                        val pResp = client.newCall(Request.Builder().url(proxiedUrl).build()).execute()
-                        body = pResp.body?.string() ?: ""
-                        if (body.startsWith("{")) addDebug("moviebox_method", "Private Proxy")
-                    } catch (pe: Exception) {
-                        addDebug("moviebox_proxy_err", pe.message ?: "Fail")
-                    }
-                }
-
-                // Attempt 4: Public Proxy (AllOrigins)
-                if (!body.startsWith("{")) {
-                    try {
-                        val aoUrl = "https://api.allorigins.win/raw?url=${URLEncoder.encode(targetUrl, "UTF-8")}"
-                        val aoResp = client.newCall(Request.Builder().url(aoUrl).build()).execute()
-                        body = aoResp.body?.string() ?: ""
-                        if (body.startsWith("{")) addDebug("moviebox_method", "Public Proxy (AO)")
-                    } catch (_: Exception) {}
-                }
-
-                if (body.startsWith("{")) {
-                    val bData = JSONObject(body)
-                    val bSrcs = bData.optJSONArray("url") ?: JSONArray()
-                    val bRef = bData.optJSONObject("headers")?.optString("Referer", "") ?: ""
-                    val bHeaders = if (bRef.isNotEmpty()) mapOf("Referer" to bRef) else null
-                    
-                    for (i in 0 until bSrcs.length()) {
-                        val s = bSrcs.getJSONObject(i)
-                        val su = s.optString("link", "")
-                        val res = s.optString("resulation", "Auto")
-                        val st = if (su.contains(".m3u8")) "hls" else "mp4"
-                        if (su.isNotEmpty()) addStream("MovieBox [$res]", su, st, res, bHeaders)
-                    }
-                } else {
-                    addDebug("moviebox_final_fail", "All 4 methods failed")
-                }
-            } catch (e: Exception) {
-                addDebug("moviebox_exception", e.message ?: "Unknown error")
-            }
-        }
-
-            // ═══════════════════════════════════════════════
-            // 4. WAVE 6: UNIVERSAL AGGREGATORS & IFRAMES
-            // ═══════════════════════════════════════════════
-            
-            // CineStream (Native Port)
-            try {
-                val cineStream = CineStreamProvider()
-                val passData = AppUtils.toJson(CineStreamProvider.PassData(id, mediaType))
-                val loadResponse = cineStream.load(passData)
-                if (loadResponse is MovieLoadResponse) {
-                    cineStream.loadLinks(loadResponse.dataUrl!!, false, { _ -> }) { link ->
-                        addStream("CineStream [${link.name}]", link.url, when (link.type) { ExtractorLinkType.M3U8 -> "hls"; ExtractorLinkType.DASH -> "dash"; else -> if (link.url.contains(".m3u8")) "hls" else "mp4" }, link.quality.toString(), link.headers)
-                    }
-                } else if (loadResponse is TvSeriesLoadResponse) {
-                    val ep = loadResponse.episodes.find { it.season == season?.toInt() && it.episode == episode?.toInt() }
-                    if (ep != null) {
-                        cineStream.loadLinks(ep.data, false, { _ -> }) { link ->
-                            addStream("CineStream [${link.name}]", link.url, when (link.type) { ExtractorLinkType.M3U8 -> "hls"; ExtractorLinkType.DASH -> "dash"; else -> if (link.url.contains(".m3u8")) "hls" else "mp4" }, link.quality.toString(), link.headers)
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                addDebug("cinestream_err", e.message ?: "Unknown")
-            }
-
-            val fallbacks = mapOf(
-                "Vidsrc.to" to "https://vidsrc.to/embed/$mediaType/$id",
-                "Vidsrc.xyz" to "https://vidsrc.xyz/embed/$mediaType/$id",
-                "Vidsrc.net" to "https://vidsrc.net/embed/$mediaType/$id",
-                "RiveStream" to "https://rivestream.com/embed/$mediaType/$id",
-                "Embed.su" to "https://embed.su/embed/$mediaType/$id",
-                "VidLink" to "https://vidlink.pro/$mediaType/$id",
-                "SuperEmbed" to "https://multiembed.mov/directstream.php?video_id=$tmdbId&tmdb=1",
-                "2Embed" to "https://www.2embed.cc/embed$mediaType/$tmdbId",
-                "AutoEmbed" to "https://autoembed.co/$mediaType/tmdb/$tmdbId"
-            )
-            val fallbackKeys = mapOf(
-                "Vidsrc.to" to "p_vidsrccc",
-                "Vidsrc.xyz" to "p_vidsrccc",
-                "Vidsrc.net" to "p_vidsrccc",
-                "RiveStream" to "p_vidsrccc",
-                "Embed.su" to "p_vidsrccc",
-                "VidLink" to "p_vidlink",
-                "SuperEmbed" to "p_vidsrccc",
-                "2Embed" to "p_2embed",
-                "AutoEmbed" to "p_autoembed"
-            )
-
-            fallbacks.forEach { (n, u) -> 
-                if (Settings.isEnabled(fallbackKeys[n] ?: "p_vidsrccc")) {
-                    addStream(n, u, "iframe")
-                }
-            }
-
-            // Stremio Addon Bridges
-            val addons = mapOf("WebStreamr" to "https://webstreamr.hayd.uk", "Streamvix" to "https://streamvix.hayd.uk", "NoTorrent" to "https://addon-osvh.onrender.com")
-            val addonKeys = mapOf("WebStreamr" to "p_webstreamr", "Streamvix" to "p_streamvix", "NoTorrent" to "p_notorrent")
-            
-            addons.forEach { (n, b) ->
-                if (Settings.isEnabled(addonKeys[n] ?: "")) {
-                    try {
-                        val url = if (season == null) "$b/stream/movie/$id.json" else "$b/stream/tv/$id:$season:$episode.json"
-                        val resp = client.newCall(Request.Builder().url(url).build()).execute()
-                        if (resp.isSuccessful) {
-                            val sArr = JSONObject(resp.body?.string() ?: "{}").optJSONArray("streams") ?: JSONArray()
-                            for (i in 0 until sArr.length()) {
-                                val s = sArr.getJSONObject(i); val su = s.optString("url", "")
-                                if (su.isNotBlank()) addStream("$n ${s.optString("name")}", su, if (su.contains(".m3u8")) "hls" else "mp4")
-                            }
-                        }
-                    } catch (_: Exception) {}
-                }
+                tasks.awaitAll()
             }
 
             // Final Response
+            val streams = JSONArray()
+            streamsList.forEach { streams.put(it) }
+
             call.respondText(JSONObject().apply {
                 put("provider", "Antigravity Mega-Aggregator v4")
                 put("status", if (streams.length() > 0) "success" else "failed")
