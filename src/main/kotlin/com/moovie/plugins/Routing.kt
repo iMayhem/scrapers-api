@@ -20,6 +20,7 @@ import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 import java.nio.charset.StandardCharsets
+import java.net.URLEncoder
 
 private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 private const val TMDB_API_KEY = "f02a0c39f2e7a175fec9f673ff440c4e"
@@ -127,9 +128,14 @@ fun Application.configureRouting() {
             // MovieBox / StreamBox
             try {
                 val boxBase = "https://vidjoy.pro/embed/api/fastfetch"
-                val bUrl = if (season == null) "$boxBase/$tmdbId?sr=0" else "$boxBase/$tmdbId/$season/$episode?sr=0"
-                addDebug("moviebox_url", bUrl)
-                val bResp = client.newCall(Request.Builder().url(bUrl).header("User-Agent", USER_AGENT).build()).execute()
+                val proxyBase = "https://moovie-proxy.sujeetunbeatable.workers.dev/?url="
+                val targetUrl = if (season == null) "$boxBase/$tmdbId?sr=0" else "$boxBase/$tmdbId/$season/$episode?sr=0"
+                val proxiedUrl = "$proxyBase${URLEncoder.encode(targetUrl, "UTF-8")}"
+                
+                addDebug("moviebox_url", targetUrl)
+                addDebug("moviebox_proxied", proxiedUrl)
+                
+                val bResp = client.newCall(Request.Builder().url(proxiedUrl).header("User-Agent", USER_AGENT).build()).execute()
                 if (bResp.isSuccessful) {
                     val body = bResp.body?.string() ?: "{}"
                     addDebug("moviebox_raw", if (body.length > 100) body.take(100) + "..." else body)
