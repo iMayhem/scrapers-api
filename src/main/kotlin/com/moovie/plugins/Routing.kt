@@ -198,6 +198,28 @@ fun Application.configureRouting() {
             // ═══════════════════════════════════════════════
             // 4. WAVE 6: UNIVERSAL AGGREGATORS & IFRAMES
             // ═══════════════════════════════════════════════
+            
+            // CineStream (Native Port)
+            try {
+                val cineStream = CineStreamProvider()
+                val passData = AppUtils.toJson(CineStreamProvider.PassData(id, mediaType))
+                val loadResponse = cineStream.load(passData)
+                if (loadResponse is MovieLoadResponse) {
+                    cineStream.loadLinks(loadResponse.dataUrl!!, false, { _ -> }) { link ->
+                        addStream("CineStream [${link.name}]", link.url, if (link.isM3u8) "hls" else "mp4", link.quality.toString(), link.headers)
+                    }
+                } else if (loadResponse is TvSeriesLoadResponse) {
+                    val ep = loadResponse.episodes.find { it.season == season?.toInt() && it.episode == episode?.toInt() }
+                    if (ep != null) {
+                        cineStream.loadLinks(ep.data, false, { _ -> }) { link ->
+                            addStream("CineStream [${link.name}]", link.url, if (link.isM3u8) "hls" else "mp4", link.quality.toString(), link.headers)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                addDebug("cinestream_err", e.message ?: "Unknown")
+            }
+
             val fallbacks = mapOf(
                 "Vidsrc.to" to "https://vidsrc.to/embed/$mediaType/$id",
                 "Vidsrc.xyz" to "https://vidsrc.xyz/embed/$mediaType/$id",
