@@ -607,12 +607,22 @@ object Settings {
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return
                 val body = response.body?.string() ?: return
-                val config = gson.fromJson(body, RemoteConfig::class.java)
                 
-                remoteProviderKeys = config.providers.map { it.key }
-                disabledProviderKeys = config.providers.filter { !it.enabled }.map { it.key }.toSet()
+                // Handle potential double-encoding (if body is a JSON string instead of an object)
+                val rawJson = if (body.trim().startsWith("\"")) {
+                    println("[Settings] Double-encoded JSON detected, unescaping...")
+                    gson.fromJson(body, String::class.java)
+                } else {
+                    body
+                }
+
+                val config = gson.fromJson(rawJson, RemoteConfig::class.java)
                 
-                println("[Settings] Remote config updated from Gist. ${remoteProviderKeys.size} providers, ${disabledProviderKeys.size} disabled.")
+                if (config?.providers != null) {
+                    remoteProviderKeys = config.providers.map { it.key }
+                    disabledProviderKeys = config.providers.filter { !it.enabled }.map { it.key }.toSet()
+                    println("[Settings] Remote config updated. ${remoteProviderKeys.size} providers, ${disabledProviderKeys.size} disabled.")
+                }
             }
         } catch (e: Exception) {
             println("[Settings] Failed to fetch remote config: ${e.message}")
@@ -636,6 +646,13 @@ object Settings {
     )
     
     fun stremioAddonKey(name: String): String = "stremio_${name.lowercase()}"
+    fun isEnabled(key: String): Boolean {
+        // If we have remote keys, and the key is one of them, check if it's disabled.
+        // If it's NOT in remote keys, it might be a new/hardcoded one we haven't registered yet?
+        // Let's assume if it's in disabledProviderKeys, it's disabled.
+        return key !in disabledProviderKeys
+    }
+
     fun getShowboxToken(): String? = "direct"
 }
 
