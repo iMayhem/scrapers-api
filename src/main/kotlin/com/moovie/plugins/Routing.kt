@@ -205,13 +205,13 @@ fun Application.configureRouting() {
                 val loadResponse = cineStream.load(passData)
                 if (loadResponse is MovieLoadResponse) {
                     cineStream.loadLinks(loadResponse.dataUrl!!, false, { _ -> }) { link ->
-                        addStream("CineStream [${link.name}]", link.url, if (link.isM3u8) "hls" else "mp4", link.quality.toString(), link.headers)
+                        addStream("CineStream [${link.name}]", link.url, when (link.type) { ExtractorLinkType.M3U8 -> "hls"; ExtractorLinkType.DASH -> "dash"; else -> if (link.url.contains(".m3u8")) "hls" else "mp4" }, link.quality.toString(), link.headers)
                     }
                 } else if (loadResponse is TvSeriesLoadResponse) {
                     val ep = loadResponse.episodes.find { it.season == season?.toInt() && it.episode == episode?.toInt() }
                     if (ep != null) {
                         cineStream.loadLinks(ep.data, false, { _ -> }) { link ->
-                            addStream("CineStream [${link.name}]", link.url, if (link.isM3u8) "hls" else "mp4", link.quality.toString(), link.headers)
+                            addStream("CineStream [${link.name}]", link.url, when (link.type) { ExtractorLinkType.M3U8 -> "hls"; ExtractorLinkType.DASH -> "dash"; else -> if (link.url.contains(".m3u8")) "hls" else "mp4" }, link.quality.toString(), link.headers)
                         }
                     }
                 }
