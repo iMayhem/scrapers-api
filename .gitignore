@@ -4,3 +4,4 @@ build_output*.txt
 *.class
 *.bin
 *.lock
+bin/

@@ -25,6 +25,38 @@ import kotlinx.coroutines.*
 import java.util.Collections
 
 private const val TMDB_API_KEY = "f02a0c39f2e7a175fec9f673ff440c4e"
+private const val PING_TIMEOUT_MS = 3000L
+
+/** Measure response latency (ms) for direct stream URLs. Returns null on failure or timeout. */
+private fun measurePing(
+    client: OkHttpClient,
+    url: String,
+    headers: Map<String, String>?,
+): Long? {
+    val pingClient = client.newBuilder()
+        .connectTimeout(PING_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        .readTimeout(PING_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        .build()
+    val start = System.currentTimeMillis()
+    return try {
+        val reqBuilder = Request.Builder().url(url)
+        headers?.forEach { (k, v) -> reqBuilder.header(k, v) }
+        val headReq = reqBuilder.head().build()
+        val resp = pingClient.newCall(headReq).execute()
+        if (resp.isSuccessful) System.currentTimeMillis() - start
+        else {
+            val getReq = Request.Builder().url(url)
+                .addHeader("Range", "bytes=0-0")
+                .apply { headers?.forEach { (k, v) -> header(k, v) } }
+                .build()
+            val start2 = System.currentTimeMillis()
+            val getResp = pingClient.newCall(getReq).execute()
+            if (getResp.isSuccessful) System.currentTimeMillis() - start2 else null
+        }
+    } catch (_: Exception) {
+        null
+    }
+}
 
 fun Application.configureRouting() {
     val client = OkHttpClient.Builder()
@@ -74,16 +106,30 @@ fun Application.configureRouting() {
             
             suspend fun emitLog(msg: String) = emit("log", JSONObject().put("message", msg))
 
-            fun createStreamObj(server: String, url: String, type: String = "hls", quality: String = "Auto", headers: Map<String, String>? = null): JSONObject {
+            fun createStreamObj(
+                server: String,
+                url: String,
+                type: String = "hls",
+                quality: String = "Auto",
+                headers: Map<String, String>? = null,
+                latencyMs: Long? = null,
+            ): JSONObject {
                 return JSONObject().apply {
-                    put("server", server); put("url", url); put("quality", quality); put("type", type)
+                    put("server", server)
+                    put("url", url)
+                    put("quality", quality)
+                    put("type", type)
                     if (headers != null) put("headers", JSONObject(headers))
+                    if (latencyMs != null) put("latencyMs", latencyMs)
                 }
             }
 
             suspend fun addStream(server: String, url: String, type: String = "hls", quality: String = "Auto", headers: Map<String, String>? = null) {
                 if (url.isBlank()) return
-                val obj = createStreamObj(server, url, type, quality, headers)
+                val latencyMs = if (type in listOf("hls", "mp4", "dash")) {
+                    withContext(Dispatchers.IO) { measurePing(client, url, headers) }
+                } else null
+                val obj = createStreamObj(server, url, type, quality, headers, latencyMs)
                 streamsList.add(obj)
                 emit("stream", obj)
             }
