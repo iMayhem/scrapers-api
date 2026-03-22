@@ -583,9 +583,49 @@ object Log {
 }
 
 object Settings {
+    private val gson = Gson()
+    private val client = OkHttpClient()
+    private var remoteProviderKeys: List<String> = emptyList()
+    private var disabledProviderKeys: Set<String> = emptySet()
+
+    init {
+        // Initial fetch in a separate thread to not block startup
+        Thread {
+            refreshConfig()
+            // Poll for updates every 5 minutes
+            while (true) {
+                Thread.sleep(300_000)
+                refreshConfig()
+            }
+        }.start()
+    }
+
+    private fun refreshConfig() {
+        val url = System.getenv("CONFIG_URL") ?: "https://gist.githubusercontent.com/iMayhem/abbb593bdcd0bfc3d54a6284e81cc880/raw/scrapers.json"
+        try {
+            val request = Request.Builder().url(url).build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return
+                val body = response.body?.string() ?: return
+                val config = gson.fromJson(body, RemoteConfig::class.java)
+                
+                remoteProviderKeys = config.providers.map { it.key }
+                disabledProviderKeys = config.providers.filter { !it.enabled }.map { it.key }.toSet()
+                
+                println("[Settings] Remote config updated from Gist. ${remoteProviderKeys.size} providers, ${disabledProviderKeys.size} disabled.")
+            }
+        } catch (e: Exception) {
+            println("[Settings] Failed to fetch remote config: ${e.message}")
+        }
+    }
+
     fun getConcurrency(): Int = 10
     val allowDownloadLinks: Boolean = true
-    val activeProviderOrder: List<String> get() = ProviderRegistry.keys
+    
+    val activeProviderOrder: List<String> get() {
+        val base = if (remoteProviderKeys.isNotEmpty()) remoteProviderKeys else ProviderRegistry.keys
+        return base.filter { it !in disabledProviderKeys }
+    }
     
     enum class AddonType { HTTPS, TORRENT, DEBRID, SUBTITLE }
     data class StremioAddon(val name: String, val url: String, val type: AddonType)
@@ -598,6 +638,9 @@ object Settings {
     fun stremioAddonKey(name: String): String = "stremio_${name.lowercase()}"
     fun getShowboxToken(): String? = "direct"
 }
+
+data class RemoteProvider(val key: String, val name: String, val enabled: Boolean)
+data class RemoteConfig(val providers: List<RemoteProvider>)
 
 // Base64 removed to avoid conflict
 
