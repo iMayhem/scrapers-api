@@ -184,12 +184,12 @@ object app {
     val gson = Gson()
 
     class NiceResponse(val resp: Response) {
-        val text: String by lazy { resp.body?.use { it.string() } ?: "" }
+        val text: String = resp.body?.use { it.string() } ?: ""
         val document: Document by lazy { Jsoup.parse(text) }
         val code: Int = resp.code
         val isSuccessful: Boolean = resp.isSuccessful
         val url: String = resp.request.url.toString()
-        val headers: Map<String, String> by lazy { resp.headers.toMap() }
+        val headers: Map<String, String> = resp.headers.toMap()
         val cookies: Map<String, String> by lazy {
             resp.headers("Set-Cookie").associate {
                 val split = it.split(";")[0].split("=")
