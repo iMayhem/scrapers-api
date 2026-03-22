@@ -589,10 +589,11 @@ object Settings {
     private var disabledProviderKeys: Set<String> = emptySet()
 
     init {
-        // Initial fetch in a separate thread to not block startup
+        // Initial fetch synchronously to ensure settings are loaded before first request
+        refreshConfig()
+        
+        // Poll for updates every 5 minutes in a background thread
         Thread {
-            refreshConfig()
-            // Poll for updates every 5 minutes
             while (true) {
                 Thread.sleep(300_000)
                 refreshConfig()
@@ -601,7 +602,8 @@ object Settings {
     }
 
     private fun refreshConfig() {
-        val url = System.getenv("CONFIG_URL") ?: "https://gist.githubusercontent.com/iMayhem/abbb593bdcd0bfc3d54a6284e81cc880/raw/scrapers.json"
+        val baseUrl = System.getenv("CONFIG_URL") ?: "https://gist.githubusercontent.com/iMayhem/abbb593bdcd0bfc3d54a6284e81cc880/raw/scrapers.json"
+        val url = "$baseUrl?t=${System.currentTimeMillis()}"
         try {
             val request = Request.Builder().url(url).build()
             client.newCall(request).execute().use { response ->
