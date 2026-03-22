@@ -209,7 +209,9 @@ fun Application.configureRouting() {
                                             ExtractorLinkType.DASH -> "dash"
                                             else -> if (link.url.contains(".m3u8")) "hls" else "mp4"
                                         }
-                                        addStream("CineStream [${link.name}]", link.url, st, link.quality.toString(), link.headers)
+                                        launch {
+                                            addStream("CineStream [${link.name}]", link.url, st, link.quality.toString(), link.headers)
+                                        }
                                     }
                                 } else if (loadResponse is TvSeriesLoadResponse) {
                                     val ep = loadResponse.episodes.find { it.season == season?.toInt() && it.episode == episode?.toInt() }
@@ -220,7 +222,9 @@ fun Application.configureRouting() {
                                                 ExtractorLinkType.DASH -> "dash"
                                                 else -> if (link.url.contains(".m3u8")) "hls" else "mp4"
                                             }
-                                            addStream("CineStream [${link.name}]", link.url, st, link.quality.toString(), link.headers)
+                                            launch {
+                                                addStream("CineStream [${link.name}]", link.url, st, link.quality.toString(), link.headers)
+                                            }
                                         }
                                     }
                                 }
