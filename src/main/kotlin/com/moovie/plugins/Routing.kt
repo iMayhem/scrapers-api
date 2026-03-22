@@ -68,7 +68,7 @@ fun Application.configureRouting() {
             
             suspend fun emit(type: String, data: JSONObject = JSONObject()) {
                 if (eventChannel != null) {
-                    eventChannel.send(data.apply { put("type", type) })
+                    eventChannel.send(data.apply { put("msgType", type) })
                 }
             }
             
