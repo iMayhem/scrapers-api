@@ -73,6 +73,21 @@ fun Application.configureRouting() {
     routing {
         get("/") { call.respondText("Moovie Mega-Scraper v4 (40+ Sources) is Live!") }
 
+        get("/api/config") {
+            val configUrl = System.getenv("CONFIG_URL") ?: "https://gist.githubusercontent.com/iMayhem/abbb593bdcd0bfc3d54a6284e81cc880/raw/scrapers.json"
+            try {
+                val resp = client.newCall(Request.Builder().url("$configUrl?t=${System.currentTimeMillis()}").build()).execute()
+                if (resp.isSuccessful) {
+                    val body = resp.body?.string() ?: "{}"
+                    call.respondText(body, ContentType.Application.Json)
+                } else {
+                    call.respondText("""{"providers":[],"preferences":{"prioritizeBy":"latency","maxPreferredSizeGb":3.0}}""", ContentType.Application.Json)
+                }
+            } catch (e: Exception) {
+                call.respondText("""{"providers":[],"preferences":{"prioritizeBy":"latency","maxPreferredSizeGb":3.0}}""", ContentType.Application.Json)
+            }
+        }
+
         get("/api/scrape") {
             val tmdbId = call.request.queryParameters["tmdbId"]
             val season = call.request.queryParameters["season"]
@@ -106,6 +121,14 @@ fun Application.configureRouting() {
             
             suspend fun emitLog(msg: String) = emit("log", JSONObject().put("message", msg))
 
+            fun parseFileSizeGb(server: String): Double? {
+                val gbMatch = Regex("""(\d+\.?\d*)\s*GB""", RegexOption.IGNORE_CASE).find(server)
+                if (gbMatch != null) return gbMatch.groupValues[1].toDoubleOrNull()
+                val mbMatch = Regex("""(\d+\.?\d*)\s*MB""", RegexOption.IGNORE_CASE).find(server)
+                if (mbMatch != null) return mbMatch.groupValues[1].toDoubleOrNull()?.div(1024.0)
+                return null
+            }
+
             fun createStreamObj(
                 server: String,
                 url: String,
@@ -113,6 +136,8 @@ fun Application.configureRouting() {
                 quality: String = "Auto",
                 headers: Map<String, String>? = null,
                 latencyMs: Long? = null,
+                providerKey: String? = null,
+                fileSizeGb: Double? = null,
             ): JSONObject {
                 return JSONObject().apply {
                     put("server", server)
@@ -121,15 +146,25 @@ fun Application.configureRouting() {
                     put("type", type)
                     if (headers != null) put("headers", JSONObject(headers))
                     if (latencyMs != null) put("latencyMs", latencyMs)
+                    if (providerKey != null) put("providerKey", providerKey)
+                    if (fileSizeGb != null) put("fileSizeGb", fileSizeGb)
                 }
             }
 
-            suspend fun addStream(server: String, url: String, type: String = "hls", quality: String = "Auto", headers: Map<String, String>? = null) {
+            suspend fun addStream(
+                server: String,
+                url: String,
+                type: String = "hls",
+                quality: String = "Auto",
+                headers: Map<String, String>? = null,
+                providerKey: String? = null,
+            ) {
                 if (url.isBlank()) return
                 val latencyMs = if (type in listOf("hls", "mp4", "dash")) {
                     withContext(Dispatchers.IO) { measurePing(client, url, headers) }
                 } else null
-                val obj = createStreamObj(server, url, type, quality, headers, latencyMs)
+                val fileSizeGb = parseFileSizeGb(server)
+                val obj = createStreamObj(server, url, type, quality, headers, latencyMs, providerKey, fileSizeGb)
                 streamsList.add(obj)
                 emit("stream", obj)
             }
@@ -155,7 +190,7 @@ fun Application.configureRouting() {
                                         val srcs = pJson.getJSONObject(0).optJSONArray("sources") ?: JSONArray()
                                         for (i in 0 until srcs.length()) {
                                             val s = srcs.getJSONObject(i); val su = s.optString("file", "")
-                                            if (su.startsWith("/")) addStream("Netflix Mirror", "$mir2$su", "hls")
+                                            if (su.startsWith("/")) addStream("Netflix Mirror", "$mir2$su", "hls", "Auto", null, "p_netflix")
                                         }
                                     }
                                 }
@@ -166,7 +201,7 @@ fun Application.configureRouting() {
                     tasks.add(async {
                         if (Settings.isEnabled("p_madplaycdn")) {
                             emitLog("Checking Madplay CDN...")
-                            addStream("Madplay CDN", if (season == null) "https://cdn.madplay.site/api/hls/unknown/$tmdbId/master.m3u8" else "https://cdn.madplay.site/api/hls/unknown/$tmdbId/season_$season/episode_$episode/master.m3u8", "hls")
+                            addStream("Madplay CDN", if (season == null) "https://cdn.madplay.site/api/hls/unknown/$tmdbId/master.m3u8" else "https://cdn.madplay.site/api/hls/unknown/$tmdbId/season_$season/episode_$episode/master.m3u8", "hls", "Auto", null, "p_madplaycdn")
                         }
                     })
 
@@ -181,7 +216,7 @@ fun Application.configureRouting() {
                                     val data = JSONArray(dec)
                                     for (i in 0 until data.length()) {
                                         val it = data.getJSONObject(i); val ur = it.optString("url", "")
-                                        if (ur.isNotEmpty()) addStream("CinemaOS [${it.optString("name")}]", "https://cinemaos.tech$ur")
+                                        if (ur.isNotEmpty()) addStream("CinemaOS [${it.optString("name")}]", "https://cinemaos.tech$ur", "hls", "Auto", null, "p_cinemaos")
                                     }
                                 }
                             } catch (_: Exception) {}
@@ -189,13 +224,13 @@ fun Application.configureRouting() {
                     })
 
                     // 2. Wave 4: Anime & Regional (Parallelized individual ones)
-                    if (Settings.isEnabled("p_sudatchi")) tasks.add(async { emitLog("Checking Sudatchi..."); addStream("Sudatchi", "https://sudatchi.com/api/streams?id=$tmdbId", "hls") })
-                    if (Settings.isEnabled("p_allanime")) tasks.add(async { emitLog("Checking AllAnime..."); addStream("AllAnime", "https://allmanga.to/search?q=$tmdbId", "iframe") })
-                    if (Settings.isEnabled("p_animepahe")) tasks.add(async { emitLog("Checking AnimePahe..."); addStream("AnimePahe", "https://animepahe.ru/search?q=$tmdbId", "iframe") })
-                    if (Settings.isEnabled("p_gojo")) tasks.add(async { emitLog("Checking Animetsu..."); addStream("Animetsu", "https://animetsu.cc/search/$tmdbId", "iframe") })
-                    if (Settings.isEnabled("p_flixindia")) tasks.add(async { emitLog("Checking FlixIndia..."); addStream("FlixIndia", "https://flixindia.xyz/?s=$tmdbId", "iframe") })
-                    if (Settings.isEnabled("p_rogmovies")) tasks.add(async { emitLog("Checking RogMovies..."); addStream("RogMovies", "https://rogmovies.fun/?s=$tmdbId", "iframe") })
-                    if (Settings.isEnabled("p_bollywood")) tasks.add(async { emitLog("Checking Gramcinema..."); addStream("Gramcinema", "https://gramcinema.com/?s=$tmdbId", "iframe") })
+                    if (Settings.isEnabled("p_sudatchi")) tasks.add(async { emitLog("Checking Sudatchi..."); addStream("Sudatchi", "https://sudatchi.com/api/streams?id=$tmdbId", "hls", "Auto", null, "p_sudatchi") })
+                    if (Settings.isEnabled("p_allanime")) tasks.add(async { emitLog("Checking AllAnime..."); addStream("AllAnime", "https://allmanga.to/search?q=$tmdbId", "iframe", "Auto", null, "p_allanime") })
+                    if (Settings.isEnabled("p_animepahe")) tasks.add(async { emitLog("Checking AnimePahe..."); addStream("AnimePahe", "https://animepahe.ru/search?q=$tmdbId", "iframe", "Auto", null, "p_animepahe") })
+                    if (Settings.isEnabled("p_gojo")) tasks.add(async { emitLog("Checking Animetsu..."); addStream("Animetsu", "https://animetsu.cc/search/$tmdbId", "iframe", "Auto", null, "p_gojo") })
+                    if (Settings.isEnabled("p_flixindia")) tasks.add(async { emitLog("Checking FlixIndia..."); addStream("FlixIndia", "https://flixindia.xyz/?s=$tmdbId", "iframe", "Auto", null, "p_flixindia") })
+                    if (Settings.isEnabled("p_rogmovies")) tasks.add(async { emitLog("Checking RogMovies..."); addStream("RogMovies", "https://rogmovies.fun/?s=$tmdbId", "iframe", "Auto", null, "p_rogmovies") })
+                    if (Settings.isEnabled("p_bollywood")) tasks.add(async { emitLog("Checking Gramcinema..."); addStream("Gramcinema", "https://gramcinema.com/?s=$tmdbId", "iframe", "Auto", null, "p_bollywood") })
 
                     // 3. Wave 5: MovieBox
                     tasks.add(async {
@@ -233,7 +268,7 @@ fun Application.configureRouting() {
                                         val su = s.optString("link", "")
                                         val res = s.optString("resulation", "Auto")
                                         val st = if (su.contains(".m3u8")) "hls" else "mp4"
-                                        if (su.isNotEmpty()) addStream("MovieBox [$res]", su, st, res, bHeaders)
+                                        if (su.isNotEmpty()) addStream("MovieBox [$res]", su, st, res, bHeaders, "p_moviebox")
                                     }
                                 }
                             } catch (_: Exception) {}
@@ -256,7 +291,7 @@ fun Application.configureRouting() {
                                             else -> if (link.url.contains(".m3u8")) "hls" else "mp4"
                                         }
                                         launch {
-                                            addStream("CineStream [${link.name}]", link.url, st, link.quality.toString(), link.headers)
+                                            addStream("CineStream [${link.name}]", link.url, st, link.quality.toString(), link.headers, "p_cinestream")
                                         }
                                     }
                                 } else if (loadResponse is TvSeriesLoadResponse) {
@@ -269,7 +304,7 @@ fun Application.configureRouting() {
                                                 else -> if (link.url.contains(".m3u8")) "hls" else "mp4"
                                             }
                                             launch {
-                                                addStream("CineStream [${link.name}]", link.url, st, link.quality.toString(), link.headers)
+                                                addStream("CineStream [${link.name}]", link.url, st, link.quality.toString(), link.headers, "p_cinestream")
                                             }
                                         }
                                     }
@@ -299,7 +334,7 @@ fun Application.configureRouting() {
                             "SuperEmbed" to "p_vidsrccc", "2Embed" to "p_2embed", "AutoEmbed" to "p_autoembed"
                         )
                         fallbacks.forEach { (n, u) -> 
-                            if (Settings.isEnabled(fallbackKeys[n] ?: "p_vidsrccc")) addStream(n, u, "iframe")
+                            if (Settings.isEnabled(fallbackKeys[n] ?: "p_vidsrccc")) addStream(n, u, "iframe", "Auto", null, fallbackKeys[n] ?: "p_vidsrccc")
                         }
                     })
 
@@ -317,7 +352,7 @@ fun Application.configureRouting() {
                                         val sArr = JSONObject(resp.body?.string() ?: "{}").optJSONArray("streams") ?: JSONArray()
                                         for (i in 0 until sArr.length()) {
                                             val s = sArr.getJSONObject(i); val su = s.optString("url", "")
-                                            if (su.isNotBlank()) addStream("$n ${s.optString("name")}", su, if (su.contains(".m3u8")) "hls" else "mp4")
+                                            if (su.isNotBlank()) addStream("$n ${s.optString("name")}", su, if (su.contains(".m3u8")) "hls" else "mp4", "Auto", null, addonKeys[n] ?: "")
                                         }
                                     }
                                 } catch (_: Exception) {}

@@ -659,7 +659,14 @@ object Settings {
 }
 
 data class RemoteProvider(val key: String, val name: String, val enabled: Boolean)
-data class RemoteConfig(val providers: List<RemoteProvider>)
+data class ScraperPreferences(
+    val prioritizeBy: String = "latency",
+    val maxPreferredSizeGb: Double = 3.0,
+)
+data class RemoteConfig(
+    val providers: List<RemoteProvider>,
+    val preferences: ScraperPreferences? = null,
+)
 
 // Base64 removed to avoid conflict
 
