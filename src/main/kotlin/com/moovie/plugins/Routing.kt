@@ -128,17 +128,40 @@ fun Application.configureRouting() {
             // MovieBox / StreamBox
             try {
                 val boxBase = "https://vidjoy.pro/embed/api/fastfetch"
-                val proxyBase = "https://moovie-proxy.sujeetunbeatable.workers.dev/?url="
                 val targetUrl = if (season == null) "$boxBase/$tmdbId?sr=0" else "$boxBase/$tmdbId/$season/$episode?sr=0"
-                val proxiedUrl = "$proxyBase${URLEncoder.encode(targetUrl, "UTF-8")}"
-                
                 addDebug("moviebox_url", targetUrl)
-                addDebug("moviebox_proxied", proxiedUrl)
                 
-                val bResp = client.newCall(Request.Builder().url(proxiedUrl).header("User-Agent", USER_AGENT).build()).execute()
-                if (bResp.isSuccessful) {
-                    val body = bResp.body?.string() ?: "{}"
-                    addDebug("moviebox_raw", if (body.length > 100) body.take(100) + "..." else body)
+                // Attempt 1: Direct with Browser Headers
+                val dReq = Request.Builder().url(targetUrl)
+                    .header("User-Agent", USER_AGENT)
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
+                    .header("Accept-Language", "en-US,en;q=0.9")
+                    .header("Sec-Fetch-Dest", "document")
+                    .header("Sec-Fetch-Mode", "navigate")
+                    .header("Sec-Fetch-Site", "none")
+                    .header("Upgrade-Insecure-Requests", "1")
+                    .build()
+                
+                var bResp = client.newCall(dReq).execute()
+                var body = bResp.body?.string() ?: "{}"
+                
+                if (body.contains("<html") || !bResp.isSuccessful) {
+                    addDebug("moviebox_direct", if (bResp.isSuccessful) "Blocked (HTML)" else "HTTP ${bResp.code}")
+                    // Attempt 2: Proxy
+                    try {
+                        val proxyBase = "https://moovie-proxy.sujeetunbeatable.workers.dev/?url="
+                        val proxiedUrl = "$proxyBase${URLEncoder.encode(targetUrl, "UTF-8")}"
+                        addDebug("moviebox_proxy_attempt", "Trying proxy...")
+                        bResp = client.newCall(Request.Builder().url(proxiedUrl).header("User-Agent", USER_AGENT).build()).execute()
+                        if (bResp.isSuccessful) body = bResp.body?.string() ?: "{}"
+                    } catch (pe: Exception) {
+                        addDebug("moviebox_proxy_err", pe.message ?: "DNS/Proxy fail")
+                    }
+                } else {
+                    addDebug("moviebox_direct", "Success (Direct)")
+                }
+
+                if (body.startsWith("{")) {
                     val bData = JSONObject(body)
                     val bSrcs = bData.optJSONArray("url") ?: JSONArray()
                     val bRef = bData.optJSONObject("headers")?.optString("Referer", "") ?: ""
@@ -153,7 +176,7 @@ fun Application.configureRouting() {
                         if (su.isNotEmpty()) addStream("MovieBox [$res]", su, st, res, bHeaders)
                     }
                 } else {
-                    addDebug("moviebox_error", "HTTP ${bResp.code}")
+                    addDebug("moviebox_final_fail", "No valid JSON found")
                 }
             } catch (e: Exception) {
                 addDebug("moviebox_exception", e.message ?: "Unknown error")
