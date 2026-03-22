@@ -1,0 +1,6 @@
+build/
+.gradle/
+build_output*.txt
+*.class
+*.bin
+*.lock

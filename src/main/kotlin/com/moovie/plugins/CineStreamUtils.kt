@@ -213,106 +213,6 @@ fun getSimplifiedTitle(title: String): String {
     return if (result.isEmpty()) "" else "\n$result"
 }
 
-val languageMap = mapOf(
-    "Afrikaans" to listOf("af", "afr"),
-    "Albanian" to listOf("sq", "sqi"),
-    "Amharic" to listOf("am", "amh"),
-    "Arabic" to listOf("ar", "ara"),
-    "Armenian" to listOf("hy", "hye"),
-    "Azerbaijani" to listOf("az", "aze"),
-    "Basque" to listOf("eu", "eus"),
-    "Belarusian" to listOf("be", "bel"),
-    "Bengali" to listOf("bn", "ben"),
-    "Bosnian" to listOf("bs", "bos"),
-    "Bulgarian" to listOf("bg", "bul"),
-    "Catalan" to listOf("ca", "cat"),
-    "Chinese" to listOf("zh", "zho"),
-    "Croatian" to listOf("hr", "hrv"),
-    "Czech" to listOf("cs", "ces"),
-    "Danish" to listOf("da", "dan"),
-    "Dutch" to listOf("nl", "nld"),
-    "English" to listOf("en", "eng"),
-    "Estonian" to listOf("et", "est"),
-    "Filipino" to listOf("tl", "tgl", "fil"),
-    "Finnish" to listOf("fi", "fin"),
-    "French" to listOf("fr", "fra"),
-    "Galician" to listOf("gl", "glg"),
-    "Georgian" to listOf("ka", "kat"),
-    "German" to listOf("de", "deu", "ger"),
-    "Greek" to listOf("el", "ell"),
-    "Gujarati" to listOf("gu", "guj"),
-    "Hebrew" to listOf("he", "heb"),
-    "Hindi" to listOf("hi", "hin"),
-    "Hungarian" to listOf("hu", "hun"),
-    "Icelandic" to listOf("is", "isl"),
-    "Indonesian" to listOf("id", "ind"),
-    "Italian" to listOf("it", "ita"),
-    "Japanese" to listOf("ja", "jpn"),
-    "Kannada" to listOf("kn", "kan"),
-    "Kazakh" to listOf("kk", "kaz"),
-    "Korean" to listOf("ko", "kor"),
-    "Latvian" to listOf("lv", "lav"),
-    "Lithuanian" to listOf("lt", "lit"),
-    "Macedonian" to listOf("mk", "mkd"),
-    "Malay" to listOf("ms", "msa"),
-    "Malayalam" to listOf("ml", "mal"),
-    "Maltese" to listOf("mt", "mlt"),
-    "Marathi" to listOf("mr", "mar"),
-    "Mongolian" to listOf("mn", "mon"),
-    "Nepali" to listOf("ne", "nep"),
-    "Norwegian" to listOf("no", "nor"),
-    "Persian" to listOf("fa", "fas"),
-    "Polish" to listOf("pl", "pol"),
-    "Portuguese" to listOf("pt", "por"),
-    "Punjabi" to listOf("pa", "pan"),
-    "Romanian" to listOf("ro", "ron"),
-    "Russian" to listOf("ru", "rus"),
-    "Serbian" to listOf("sr", "srp"),
-    "Sinhala" to listOf("si", "sin"),
-    "Slovak" to listOf("sk", "slk"),
-    "Slovenian" to listOf("sl", "slv"),
-    "Spanish" to listOf("es", "spa"),
-    "Swahili" to listOf("sw", "swa"),
-    "Swedish" to listOf("sv", "swe"),
-    "Tamil" to listOf("ta", "tam"),
-    "Telugu" to listOf("te", "tel"),
-    "Thai" to listOf("th", "tha"),
-    "Turkish" to listOf("tr", "tur"),
-    "Ukrainian" to listOf("uk", "ukr"),
-    "Urdu" to listOf("ur", "urd"),
-    "Uzbek" to listOf("uz", "uzb"),
-    "Vietnamese" to listOf("vi", "vie"),
-    "Welsh" to listOf("cy", "cym"),
-    "Yiddish" to listOf("yi", "yid")
-)
-
-fun getLanguage(language: String?): String? {
-
-    language ?: return null
-
-    var normalizedLang = if(language.contains("-")) {
-        language.substringBefore("-")
-    } else if(language.contains(" ")) {
-        language.substringBefore(" ")
-    } else if(language.contains("CR_")) {
-        language.substringAfter("CR_")
-    } else {
-        language
-    }
-
-    if(normalizedLang.isBlank()) {
-        normalizedLang =  language
-    }
-
-    val tag = languageMap.entries.find { entry ->
-        entry.value.contains(normalizedLang)
-    }?.key
-
-    if(tag == null) {
-        return normalizedLang
-    }
-    return tag
-}
 
 fun String.getHost(): String {
     return fixTitle(URI(this).host.substringBeforeLast(".").substringAfterLast("."))
@@ -541,51 +441,6 @@ fun getKisskhTitle(str: String?): String? {
     return str?.replace(Regex("[^a-zA-Z\\d]"), "-")
 }
 
-suspend fun <A, B> Iterable<A>.safeAmap(
-    concurrency: Int = 5,
-    f: suspend (A) -> B?
-): List<B> = supervisorScope {
-    val semaphore = Semaphore(concurrency)
-    map { item ->
-        async<B?>(Dispatchers.IO) {
-            semaphore.acquire()
-            try {
-                f(item)
-            } catch (e: CancellationException) {
-                if (!this@supervisorScope.isActive) throw e
-                Log.w("safeAmap", "Item cancelled locally: ${e.message}")
-                null
-            } catch (e: Throwable) {
-                Log.e("safeAmap", "Item failed: ${e.message}")
-                null
-            } finally {
-                semaphore.release()
-            }
-        }
-    }.awaitAll().filterNotNull()
-}
-
-suspend fun runLimitedAsync(
-    concurrency: Int = 7,
-    vararg tasks: suspend () -> Unit
-) = supervisorScope {
-    val semaphore = Semaphore(concurrency)
-    tasks.map { task ->
-        async<Unit>(Dispatchers.IO) {
-            semaphore.acquire()
-            try {
-                task()
-            } catch (e: CancellationException) {
-                if (!this@supervisorScope.isActive) throw e
-                Log.w("runLimitedAsync", "Task cancelled locally: ${e.message}")
-            } catch (e: Throwable) {
-                Log.e("runLimitedAsync", "Task failed: ${e.message}")
-            } finally {
-                semaphore.release()
-            }
-        }
-    }.awaitAll()
-}
 
 fun getEpisodeSlug(
     season: Int? = null,
@@ -710,20 +565,6 @@ suspend fun getLatestBaseUrl(baseUrl: String, source: String): String {
 
 
 //Bold String
-fun String.toSansSerifBold(): String {
-    val builder = StringBuilder()
-    for (char in this) {
-        val codePoint = when (char) {
-            // Mathematical Sans-Serif Bold ranges
-            in 'A'..'Z' -> 0x1D5D4 + (char - 'A')
-            in 'a'..'z' -> 0x1D5EE + (char - 'a')
-            in '0'..'9' -> 0x1D7EC + (char - '0')
-            else -> char.code
-        }
-        builder.append(Character.toChars(codePoint))
-    }
-    return builder.toString()
-}
 
 suspend fun loadSourceNameExtractor(
     source: String,

@@ -98,4 +98,7 @@ object ApiConstants {
     val hindMoviezAPI get() = api("hindmoviez").ifEmpty { "https://hindmoviez.casa" }
     val rtallyAPI get() = api("rtally").ifEmpty { "https://rtally.life" }
     val toonStreamAPI get() = api("toonstream").ifEmpty { "https://toonstream.one" }
+    val XDmoviesAPI get() = api("xdmovies").ifEmpty { "https://xdmovies.lat" }
+    val gojoBaseAPI get() = api("gojo").ifEmpty { "https://gojo.wtf" }
+    val animekaiAPI get() = api("animekai").ifEmpty { "https://animekai.to/brain1" }
 }

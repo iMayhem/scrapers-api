@@ -22,7 +22,6 @@ import javax.crypto.spec.SecretKeySpec
 import java.nio.charset.StandardCharsets
 import java.net.URLEncoder
 
-private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 private const val TMDB_API_KEY = "f02a0c39f2e7a175fec9f673ff440c4e"
 
 fun Application.configureRouting() {
@@ -261,14 +260,6 @@ fun Application.configureRouting() {
     }
 }
 
-// CRYPTO REPLICAS
-fun cinemaOSGenerateHash(tmdbId: Int?, imdbId: String?, season: Int?, episode: Int?): String {
-    val p = "a7f3b9c2e8d4f1a6b5c9e2d7f4a8b3c6e1d9f7a4b2c8e5d3f9a6b4c1e7d2f8a5"
-    val s = "d3f8a5b2c9e6d1f7a4b8c5e2d9f3a6b1c7e4d8f2a9b5c3e7d4f1a8b6c2e9d5f3"
-    var msg = "tmdbId:$tmdbId|imdbId:$imdbId"
-    if (season != null) msg += "|seasonId:$season|episodeId:$episode"
-    return hmac256(hmac256(msg, p), s)
-}
 
 fun cinemaOSDecryptResponse(enc: String?): String? {
     if (enc.isNullOrBlank()) return null

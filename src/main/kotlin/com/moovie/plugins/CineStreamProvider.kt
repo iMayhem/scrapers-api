@@ -96,7 +96,7 @@ open class CineStreamProvider : MainAPI() {
                 if(movie.type == "movie") TvType.Movie
                 else TvType.TvSeries
             val title = movie.aliases?.firstOrNull() ?: movie.name ?: ""
-            newMovieSearchResponse(title, PassData(movie.id, movie.type).toJson(), type) {
+            newMovieSearchResponse(title, toJson(PassData(movie.id, movie.type)), type) {
                 this.posterUrl = getPosterUrl(movie.poster)
                 this.score = Score.from10(movie.imdbRating)
             }
@@ -123,7 +123,7 @@ open class CineStreamProvider : MainAPI() {
                         it.poster
                     }
 
-                    newMovieSearchResponse(title, PassData(it.id, it.type).toJson()).apply {
+                    newMovieSearchResponse(title, toJson(PassData(it.id, it.type))).apply {
                         this.posterUrl = getPosterUrl(poster)
                         this.score = Score.from10(it.imdbRating)
                     }
@@ -200,29 +200,32 @@ open class CineStreamProvider : MainAPI() {
         val isBollywood = country.contains("India", true)
         val isAsian = (country.contains("Korea", true) ||
                 country.contains("China", true)) && !isAnime
+        isAnime = if(isKitsu) true else isAnime
 
         if(tvtype == "movie") {
-            val data = LoadLinksData(
-                title,
-                id,
-                tmdbId,
-                tvtype,
-                year ?: releaseInfo,
-                null,
-                null,
-                null,
-                isAnime,
-                isBollywood,
-                isAsian,
-                isCartoon,
-                null,
-                null,
-                null,
-                isKitsu,
-                anilistId,
-                malId,
-                kitsuId,
-            ).toJson()
+            val data = toJson(
+                LoadLinksData(
+                    title,
+                    id,
+                    tmdbId,
+                    tvtype,
+                    year ?: releaseInfo,
+                    null,
+                    null,
+                    null,
+                    isAnime,
+                    isBollywood,
+                    isAsian,
+                    isCartoon,
+                    null,
+                    null,
+                    null,
+                    isKitsu,
+                    anilistId,
+                    malId,
+                    kitsuId
+                )
+            )
             return newMovieLoadResponse(engTitle, url, if(isAnime) TvType.AnimeMovie  else type, data) {
                 this.posterUrl = posterUrl
                 this.plot = description
@@ -231,9 +234,8 @@ open class CineStreamProvider : MainAPI() {
                 this.year = year ?.toIntOrNull() ?: releaseInfo?.toIntOrNull() ?: year?.substringBefore("-")?.toIntOrNull()
                 this.backgroundPosterUrl = background
                 try { this.logoUrl = logo} catch(_:Throwable){}
-                // this.duration = movieData?.runtime?.replace(" min", "")?.toIntOrNull()
                 this.contentRating = if(isKitsu) "Kitsu" else "IMDB"
-                this.actors = actors
+                this.actors = actors?.map { it.actor.name }
                 addAniListId(anilistId)
                 addMalId(malId)
                 addImdbId(id)
@@ -244,27 +246,29 @@ open class CineStreamProvider : MainAPI() {
                 ?.filter { it.season != 0 }
                 ?.map { ep ->
                 newEpisode(
-                    LoadLinksData(
-                        title,
-                        id,
-                        tmdbId,
-                        tvtype,
-                        year ?: releaseInfo,
-                        ep.season,
-                        ep.episode,
-                        ep.firstAired ?: ep.released,
-                        isAnime,
-                        isBollywood,
-                        isAsian,
-                        isCartoon,
-                        ep.imdb_id,
-                        ep.imdbSeason,
-                        ep.imdbEpisode,
-                        isKitsu,
-                        anilistId,
-                        malId,
-                        kitsuId
-                    ).toJson()
+                    toJson(
+                        LoadLinksData(
+                            title,
+                            id,
+                            tmdbId,
+                            tvtype,
+                            year ?: releaseInfo,
+                            ep.season,
+                            ep.episode,
+                            ep.firstAired ?: ep.released,
+                            isAnime,
+                            isBollywood,
+                            isAsian,
+                            isCartoon,
+                            ep.imdb_id,
+                            ep.imdbSeason,
+                            ep.imdbEpisode,
+                            isKitsu,
+                            anilistId,
+                            malId,
+                            kitsuId
+                        )
+                    )
                 ) {
                     this.name = ep.name ?: ep.title
                     this.season = ep.season
@@ -283,10 +287,9 @@ open class CineStreamProvider : MainAPI() {
                 this.plot = description
                 this.tags = genre
                 try { this.logoUrl = logo} catch(_:Throwable){}
-                // this.duration = movieData?.runtime?.replace(" min", "")?.toIntOrNull()
                 this.score = Score.from10(imdbRating)
                 this.contentRating = if(isKitsu) "Kitsu" else "IMDB"
-                this.actors = actors
+                this.actors = actors?.map { it.actor.name }
                 addAniListId(anilistId)
                 addMalId(malId)
                 addImdbId(id)
@@ -532,4 +535,3 @@ open class CineStreamProvider : MainAPI() {
         )
     }
 }
-

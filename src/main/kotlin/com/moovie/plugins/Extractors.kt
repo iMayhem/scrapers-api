@@ -287,26 +287,26 @@ open class Gofile : ExtractorApi() {
     }
 
     data class AccountResponse(
-         ("data") val data: AccountData? = null
+         val data: AccountData? = null
     )
 
     data class AccountData(
-         ("token") val token: String? = null
+         val token: String? = null
     )
 
     data class GofileResponse(
-         ("data") val data: GofileData? = null
+         val data: GofileData? = null
     )
 
     data class GofileData(
-         ("children") val children: Map<String, GofileFile>? = null
+         val children: Map<String, GofileFile>? = null
     )
 
     data class GofileFile(
-         ("type") val type: String? = null,
-         ("name") val name: String? = null,
-         ("link") val link: String? = null,
-         ("size") val size: Long? = 0L
+         val type: String? = null,
+         val name: String? = null,
+         val link: String? = null,
+         val size: Long? = 0L
     )
 }
 
@@ -921,7 +921,7 @@ class Pahe : ExtractorApi() {
             .build()
 
         val fContent = client.newCall(fContentRequest).execute()
-        val fContentString = fContent.body.string()
+        val fContentString = fContent.body?.string() ?: return
 
         val (fullString, key, v1, v2) = kwikParamsRegex.find(fContentString)!!.destructured
         val decrypted = decrypt(fullString, key, v1.toInt(), v2.toInt())
@@ -1107,8 +1107,8 @@ open class MegaUp : ExtractorApi() {
       }
 
     data class AnimeKaiResponse(
-         ("status") val status: Int,
-         ("result") val result: String
+         val status: Int,
+         val result: String
     )
 
 }

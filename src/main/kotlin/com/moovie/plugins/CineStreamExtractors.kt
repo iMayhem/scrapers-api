@@ -727,8 +727,8 @@ object CineStreamExtractors {
     ) {
 
         data class VideoResponse(
-             ("file") val file: String?,
-             ("headers") val headers: Map<String, String>?
+             val file: String?,
+             val headers: Map<String, String>?
         )
 
         val url = if(season == null) {
@@ -1444,13 +1444,8 @@ object CineStreamExtractors {
         val matched = searchData.firstOrNull { it.tmdb_id == tmdbId } ?: return
         val url = XDmoviesAPI + matched.path
 
-        val response = app.get(url).let {
-            if (
-                it.text.contains("Just a moment", true)
-            ) app.get(url, interceptor = CloudflareKiller())
-            else it
-        }
 
+        val response = app.get(url)
         val document = response.document
 
         if(season == null) {
@@ -1996,14 +1991,13 @@ object CineStreamExtractors {
             referer = "$kissKhAPI/"
         )
         if (searchResponse.code != 200) return
-        val res = tryParseJson<ArrayList<KisskhResults>>(searchResponse.text) ?: return
+        val res = tryParseJson<ArrayList<KisskhItem>>(searchResponse.text) ?: return
         val (id, contentTitle) = if (res.size == 1) {
             res.first().id to res.first().title
         } else {
             val data = res.find {
-                val slugTitle = it.title.createSlug() ?: return@find false
                 val tSlug = it.title?.createSlug() ?: return@find false
-                val tActual = it.title
+                val tActual = it.title ?: ""
                 when (season) {
                     null -> tSlug == slug
                     1 -> tSlug == slug || (tSlug.contains(slug) && (tActual.contains("$year") || tActual.contains("Season 1", true)))
@@ -2261,8 +2255,8 @@ object CineStreamExtractors {
             ),
             referer = hdmovie2API,
             headers = commonHeaders
-            ).parsed<ResponseHash>()
-            return response.embed_url.getIframe()
+            ).text.let { tryParseJson<ResponseHash>(it) }
+            return response?.embed_url?.getIframe() ?: ""
         }
 
         var link = ""
@@ -2613,9 +2607,9 @@ object CineStreamExtractors {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ) {
-        var res1 = app.get("""$bollyflixAPI/search/${id ?: return} ${season ?: ""}""", interceptor = CloudflareKiller()).document
+        var res1 = app.get("""$bollyflixAPI/search/${id ?: return} ${season ?: ""}""").document
         val url = res1.selectFirst("div > article > a")?.attr("href") ?: return
-        val res = app.get(url, interceptor = CloudflareKiller()).document
+        val res = app.get(url).document
         val hTag = if (season == null) "h5" else "h4"
         val sTag = if (season == null) "" else "Season $season"
         val entries =
@@ -2676,8 +2670,8 @@ object CineStreamExtractors {
                     ),
                     referer = url,
                     headers = mapOf("X-Requested-With" to "XMLHttpRequest")
-                ).parsed<ResponseHash>().embed_url
-                val link = source.substringAfter("\"").substringBefore("\"")
+                ).text.let { tryParseJson<ResponseHash>(it) }?.embed_url
+                val link = (source ?: "").substringAfter("\"").substringBefore("\"")
                 when {
                     !link.contains("youtube") -> {
                         loadSourceNameExtractor("Multimovies", link, referer = multimoviesAPI, subtitleCallback, callback)
@@ -3032,7 +3026,7 @@ object CineStreamExtractors {
                     ).document.selectFirst(selector)
                         ?.attr("href")?.let {
                             val link = bypassHrefli(it).toString()
-                            loadSourceNameExtractor("Topmovies", link, referer = "", subtitleCallback, callback)
+                            loadSourceNameExtractor("animepahe", it, referer = animepaheAPI, subtitleCallback, callback)
                         }
                 }
             }

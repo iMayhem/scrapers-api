@@ -180,8 +180,8 @@ data class Episode(
 // ═══════════════════════════════════════════════
 
 object app {
-    private val client = OkHttpClient()
-    private val gson = Gson()
+    val client = OkHttpClient()
+    val gson = Gson()
 
     class NiceResponse(val resp: Response) {
         val text: String by lazy { resp.body?.use { it.string() } ?: "" }
@@ -249,11 +249,61 @@ object app {
 // ═══════════════════════════════════════════════
 
 object AppUtils {
-    private val gson = Gson()
+    val gson = Gson()
     fun toJson(any: Any?): String = gson.toJson(any)
     inline fun <reified T> parseJson(json: String): T = gson.fromJson(json, T::class.java)
     inline fun <reified T> tryParseJson(json: String): T? = try { parseJson<T>(json) } catch (e: Exception) { null }
 }
+
+// Top-level convenience wrappers
+inline fun <reified T> tryParseJson(json: String?): T? = if (json == null) null else try { AppUtils.parseJson<T>(json) } catch (e: Exception) { null }
+inline fun <reified T> parseJson(json: String): T = AppUtils.parseJson(json)
+fun toJson(any: Any?): String = AppUtils.toJson(any)
+
+// Type alias so existing NiceResponse usage works without qualification
+typealias NiceResponse = app.NiceResponse
+
+suspend inline fun <T> safeApiCall(crossinline block: suspend () -> T): T? = try { block() } catch (e: Exception) { null }
+
+suspend fun getM3u8Qualities(url: String, referer: String? = null, name: String? = null): List<ExtractorLink> {
+    val headers = if (referer != null) mapOf("Referer" to referer) else emptyMap()
+    val response = app.get(url, headers = headers).text
+    val links = mutableListOf<ExtractorLink>()
+    
+    val lines = response.split("\n")
+    var currentQuality = 0
+    for (line in lines) {
+        if (line.contains("RESOLUTION=")) {
+            val resMatch = Regex("""RESOLUTION=(\d+)x(\d+)""").find(line)
+            if (resMatch != null) {
+                currentQuality = resMatch.groupValues[2].toInt()
+            }
+        } else if (line.trim().startsWith("http") || (line.trim().isNotEmpty() && !line.startsWith("#"))) {
+            val m3u8Link = if (line.trim().startsWith("http")) line.trim() else {
+                val base = url.substringBeforeLast("/")
+                "$base/${line.trim()}"
+            }
+            links.add(newExtractorLink(
+                name ?: "M3U8",
+                name ?: "M3U8",
+                m3u8Link,
+                ExtractorLinkType.M3U8
+            ).apply { quality = if (currentQuality > 0) currentQuality else Qualities.Unknown.value })
+            currentQuality = 0
+        }
+    }
+    
+    if (links.isEmpty()) {
+        links.add(newExtractorLink(
+            name ?: "M3U8",
+            name ?: "M3U8",
+            url,
+            ExtractorLinkType.M3U8
+        ))
+    }
+    return links
+}
+
 
 suspend fun <A, B> Iterable<A>.safeAmap(
     concurrency: Int = 10,
@@ -266,6 +316,7 @@ suspend fun <A, B> Iterable<A>.safeAmap(
             try {
                 f(item)
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 null
             } finally {
                 semaphore.release()
@@ -424,11 +475,106 @@ fun LoadResponse.addAniListId(id: Int?) {}
 fun LoadResponse.addImdbId(id: String?) {}
 fun LoadResponse.addMalId(id: Int?) {}
 
-fun base64Decode(text: String): String = String(Base64.getDecoder().decode(text))
+val languageMap = mapOf(
+    "Afrikaans" to listOf("af", "afr"),
+    "Albanian" to listOf("sq", "sqi"),
+    "Amharic" to listOf("am", "amh"),
+    "Arabic" to listOf("ar", "ara"),
+    "Armenian" to listOf("hy", "hye"),
+    "Azerbaijani" to listOf("az", "aze"),
+    "Basque" to listOf("eu", "eus"),
+    "Belarusian" to listOf("be", "bel"),
+    "Bengali" to listOf("bn", "ben"),
+    "Bosnian" to listOf("bs", "bos"),
+    "Bulgarian" to listOf("bg", "bul"),
+    "Catalan" to listOf("ca", "cat"),
+    "Chinese" to listOf("zh", "zho"),
+    "Croatian" to listOf("hr", "hrv"),
+    "Czech" to listOf("cs", "ces"),
+    "Danish" to listOf("da", "dan"),
+    "Dutch" to listOf("nl", "nld"),
+    "English" to listOf("en", "eng"),
+    "Estonian" to listOf("et", "est"),
+    "Filipino" to listOf("tl", "tgl", "fil"),
+    "Finnish" to listOf("fi", "fin"),
+    "French" to listOf("fr", "fra"),
+    "Galician" to listOf("gl", "glg"),
+    "Georgian" to listOf("ka", "kat"),
+    "German" to listOf("de", "deu", "ger"),
+    "Greek" to listOf("el", "ell"),
+    "Gujarati" to listOf("gu", "guj"),
+    "Hebrew" to listOf("he", "heb"),
+    "Hindi" to listOf("hi", "hin"),
+    "Hungarian" to listOf("hu", "hun"),
+    "Icelandic" to listOf("is", "isl"),
+    "Indonesian" to listOf("id", "ind"),
+    "Italian" to listOf("it", "ita"),
+    "Japanese" to listOf("ja", "jpn"),
+    "Kannada" to listOf("kn", "kan"),
+    "Kazakh" to listOf("kk", "kaz"),
+    "Korean" to listOf("ko", "kor"),
+    "Latvian" to listOf("lv", "lav"),
+    "Lithuanian" to listOf("lt", "lit"),
+    "Macedonian" to listOf("mk", "mkd"),
+    "Malay" to listOf("ms", "msa"),
+    "Malayalam" to listOf("ml", "mal"),
+    "Maltese" to listOf("mt", "mlt"),
+    "Marathi" to listOf("mr", "mar"),
+    "Mongolian" to listOf("mn", "mon"),
+    "Nepali" to listOf("ne", "nep"),
+    "Norwegian" to listOf("no", "nor"),
+    "Persian" to listOf("fa", "fas"),
+    "Polish" to listOf("pl", "pol"),
+    "Portuguese" to listOf("pt", "por"),
+    "Punjabi" to listOf("pa", "pan"),
+    "Romanian" to listOf("ro", "ron"),
+    "Russian" to listOf("ru", "rus"),
+    "Serbian" to listOf("sr", "srp"),
+    "Sinhala" to listOf("si", "sin"),
+    "Slovak" to listOf("sk", "slk"),
+    "Slovenian" to listOf("sl", "slv"),
+    "Spanish" to listOf("es", "spa"),
+    "Swahili" to listOf("sw", "swa"),
+    "Swedish" to listOf("sv", "swe"),
+    "Tamil" to listOf("ta", "tam"),
+    "Telugu" to listOf("te", "tel"),
+    "Thai" to listOf("th", "tha"),
+    "Turkish" to listOf("tr", "tur"),
+    "Ukrainian" to listOf("uk", "ukr"),
+    "Urdu" to listOf("ur", "urd"),
+    "Uzbek" to listOf("uz", "uzb"),
+    "Vietnamese" to listOf("vi", "vie"),
+    "Welsh" to listOf("cy", "cym"),
+    "Yiddish" to listOf("yi", "yid")
+)
 
-fun getLanguage(lang: String?): String? = lang // Stub
+fun getLanguage(language: String?): String? {
+    language ?: return null
+    var normalizedLang = if(language.contains("-")) {
+        language.substringBefore("-")
+    } else if(language.contains(" ")) {
+        language.substringBefore(" ")
+    } else if(language.contains("CR_")) {
+        language.substringAfter("CR_")
+    } else {
+        language
+    }
 
-const val INFER_TYPE = ExtractorLinkType.VIDEO
+    if(normalizedLang.isBlank()) {
+        normalizedLang =  language
+    }
+
+    val tag = languageMap.entries.find { entry ->
+        entry.value.contains(normalizedLang)
+    }?.key
+
+    if(tag == null) {
+        return normalizedLang
+    }
+    return tag
+}
+
+val INFER_TYPE = ExtractorLinkType.VIDEO
 
 object Log {
     fun d(tag: String, msg: String) = println("[$tag] $msg")
@@ -453,12 +599,7 @@ object Settings {
     fun getShowboxToken(): String? = "direct"
 }
 
-object Base64 {
-    const val NO_WRAP = 0
-    const val DEFAULT = 0
-    fun encodeToString(bytes: ByteArray, flags: Int): String = java.util.Base64.getEncoder().encodeToString(bytes)
-    fun decode(text: String, flags: Int): ByteArray = java.util.Base64.getDecoder().decode(text)
-}
+// Base64 removed to avoid conflict
 
 data class TripleOneMoviesServer(
     val name: String,
