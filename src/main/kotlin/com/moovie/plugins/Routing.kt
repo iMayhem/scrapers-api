@@ -131,34 +131,48 @@ fun Application.configureRouting() {
                 val targetUrl = if (season == null) "$boxBase/$tmdbId?sr=0" else "$boxBase/$tmdbId/$season/$episode?sr=0"
                 addDebug("moviebox_url", targetUrl)
                 
-                // Attempt 1: Direct with Browser Headers
-                val dReq = Request.Builder().url(targetUrl)
-                    .header("User-Agent", USER_AGENT)
-                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
-                    .header("Accept-Language", "en-US,en;q=0.9")
-                    .header("Sec-Fetch-Dest", "document")
-                    .header("Sec-Fetch-Mode", "navigate")
-                    .header("Sec-Fetch-Site", "none")
-                    .header("Upgrade-Insecure-Requests", "1")
-                    .build()
+                var body = ""
                 
-                var bResp = client.newCall(dReq).execute()
-                var body = bResp.body?.string() ?: "{}"
-                
-                if (body.contains("<html") || !bResp.isSuccessful) {
-                    addDebug("moviebox_direct", if (bResp.isSuccessful) "Blocked (HTML)" else "HTTP ${bResp.code}")
-                    // Attempt 2: Proxy
+                // Attempt 1: Direct (Desktop)
+                try {
+                    val dResp = client.newCall(Request.Builder().url(targetUrl)
+                        .header("User-Agent", USER_AGENT)
+                        .header("Accept", "application/json, text/plain, */*")
+                        .header("Referer", "https://vidjoy.pro/").build()).execute()
+                    body = dResp.body?.string() ?: ""
+                    if (body.startsWith("{")) addDebug("moviebox_method", "Direct (Desktop)")
+                } catch (_: Exception) {}
+
+                // Attempt 2: Direct (Mobile)
+                if (!body.startsWith("{")) {
                     try {
-                        val proxyBase = "https://moovie-proxy.sujeetunbeatable.workers.dev/?url="
-                        val proxiedUrl = "$proxyBase${URLEncoder.encode(targetUrl, "UTF-8")}"
-                        addDebug("moviebox_proxy_attempt", "Trying proxy...")
-                        bResp = client.newCall(Request.Builder().url(proxiedUrl).header("User-Agent", USER_AGENT).build()).execute()
-                        if (bResp.isSuccessful) body = bResp.body?.string() ?: "{}"
+                        val mUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1"
+                        val mResp = client.newCall(Request.Builder().url(targetUrl).header("User-Agent", mUA).build()).execute()
+                        body = mResp.body?.string() ?: ""
+                        if (body.startsWith("{")) addDebug("moviebox_method", "Direct (Mobile)")
+                    } catch (_: Exception) {}
+                }
+
+                // Attempt 3: Private Proxy
+                if (!body.startsWith("{")) {
+                    try {
+                        val proxiedUrl = "https://moovie-proxy.sujeetunbeatable.workers.dev/?url=${URLEncoder.encode(targetUrl, "UTF-8")}"
+                        val pResp = client.newCall(Request.Builder().url(proxiedUrl).build()).execute()
+                        body = pResp.body?.string() ?: ""
+                        if (body.startsWith("{")) addDebug("moviebox_method", "Private Proxy")
                     } catch (pe: Exception) {
-                        addDebug("moviebox_proxy_err", pe.message ?: "DNS/Proxy fail")
+                        addDebug("moviebox_proxy_err", pe.message ?: "Fail")
                     }
-                } else {
-                    addDebug("moviebox_direct", "Success (Direct)")
+                }
+
+                // Attempt 4: Public Proxy (AllOrigins)
+                if (!body.startsWith("{")) {
+                    try {
+                        val aoUrl = "https://api.allorigins.win/raw?url=${URLEncoder.encode(targetUrl, "UTF-8")}"
+                        val aoResp = client.newCall(Request.Builder().url(aoUrl).build()).execute()
+                        body = aoResp.body?.string() ?: ""
+                        if (body.startsWith("{")) addDebug("moviebox_method", "Public Proxy (AO)")
+                    } catch (_: Exception) {}
                 }
 
                 if (body.startsWith("{")) {
@@ -167,7 +181,6 @@ fun Application.configureRouting() {
                     val bRef = bData.optJSONObject("headers")?.optString("Referer", "") ?: ""
                     val bHeaders = if (bRef.isNotEmpty()) mapOf("Referer" to bRef) else null
                     
-                    if (bSrcs.length() == 0) addDebug("moviebox_found", "0 streams")
                     for (i in 0 until bSrcs.length()) {
                         val s = bSrcs.getJSONObject(i)
                         val su = s.optString("link", "")
@@ -176,7 +189,7 @@ fun Application.configureRouting() {
                         if (su.isNotEmpty()) addStream("MovieBox [$res]", su, st, res, bHeaders)
                     }
                 } else {
-                    addDebug("moviebox_final_fail", "No valid JSON found")
+                    addDebug("moviebox_final_fail", "All 4 methods failed")
                 }
             } catch (e: Exception) {
                 addDebug("moviebox_exception", e.message ?: "Unknown error")
