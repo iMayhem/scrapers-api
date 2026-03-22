@@ -59,7 +59,10 @@ fun Application.configureRouting() {
             } catch (_: Exception) {}
 
             val streams = JSONArray()
-            val id = imdbId ?: tmdbId
+            val debugMsg = JSONObject()
+            val id = if (imdbId.isNullOrEmpty()) tmdbId else imdbId
+            
+            fun addDebug(k: String, v: String) { debugMsg.put(k, v) }
 
             fun addStream(server: String, url: String, type: String = "hls", quality: String = "Auto", headers: Map<String, String>? = null) {
                 if (url.isBlank()) return
@@ -125,13 +128,17 @@ fun Application.configureRouting() {
             try {
                 val boxBase = "https://vidjoy.pro/embed/api/fastfetch"
                 val bUrl = if (season == null) "$boxBase/$tmdbId?sr=0" else "$boxBase/$tmdbId/$season/$episode?sr=0"
+                addDebug("moviebox_url", bUrl)
                 val bResp = client.newCall(Request.Builder().url(bUrl).header("User-Agent", USER_AGENT).build()).execute()
                 if (bResp.isSuccessful) {
-                    val bData = JSONObject(bResp.body?.string() ?: "{}")
+                    val body = bResp.body?.string() ?: "{}"
+                    addDebug("moviebox_raw", if (body.length > 100) body.take(100) + "..." else body)
+                    val bData = JSONObject(body)
                     val bSrcs = bData.optJSONArray("url") ?: JSONArray()
                     val bRef = bData.optJSONObject("headers")?.optString("Referer", "") ?: ""
                     val bHeaders = if (bRef.isNotEmpty()) mapOf("Referer" to bRef) else null
                     
+                    if (bSrcs.length() == 0) addDebug("moviebox_found", "0 streams")
                     for (i in 0 until bSrcs.length()) {
                         val s = bSrcs.getJSONObject(i)
                         val su = s.optString("link", "")
@@ -139,8 +146,12 @@ fun Application.configureRouting() {
                         val st = if (su.contains(".m3u8")) "hls" else "mp4"
                         if (su.isNotEmpty()) addStream("MovieBox [$res]", su, st, res, bHeaders)
                     }
+                } else {
+                    addDebug("moviebox_error", "HTTP ${bResp.code}")
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                addDebug("moviebox_exception", e.message ?: "Unknown error")
+            }
 
             // ═══════════════════════════════════════════════
             // 4. WAVE 6: UNIVERSAL AGGREGATORS & IFRAMES
@@ -180,6 +191,7 @@ fun Application.configureRouting() {
                 put("status", if (streams.length() > 0) "success" else "failed")
                 put("total", streams.length())
                 put("stream", streams)
+                put("debug", debugMsg)
             }.toString(2), ContentType.Application.Json)
         }
     }
