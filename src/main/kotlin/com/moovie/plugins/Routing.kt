@@ -42,16 +42,18 @@ private fun measurePing(
         val reqBuilder = Request.Builder().url(url)
         headers?.forEach { (k, v) -> reqBuilder.header(k, v) }
         val headReq = reqBuilder.head().build()
-        val resp = pingClient.newCall(headReq).execute()
-        if (resp.isSuccessful) System.currentTimeMillis() - start
-        else {
-            val getReq = Request.Builder().url(url)
-                .addHeader("Range", "bytes=0-0")
-                .apply { headers?.forEach { (k, v) -> header(k, v) } }
-                .build()
-            val start2 = System.currentTimeMillis()
-            val getResp = pingClient.newCall(getReq).execute()
-            if (getResp.isSuccessful) System.currentTimeMillis() - start2 else null
+        pingClient.newCall(headReq).execute().use { resp ->
+            if (resp.isSuccessful) System.currentTimeMillis() - start
+            else {
+                val getReq = Request.Builder().url(url)
+                    .addHeader("Range", "bytes=0-0")
+                    .apply { headers?.forEach { (k, v) -> header(k, v) } }
+                    .build()
+                val start2 = System.currentTimeMillis()
+                pingClient.newCall(getReq).execute().use { getResp ->
+                    if (getResp.isSuccessful) System.currentTimeMillis() - start2 else null
+                }
+            }
         }
     } catch (_: Exception) {
         null
@@ -76,12 +78,13 @@ fun Application.configureRouting() {
         get("/api/config") {
             val configUrl = System.getenv("CONFIG_URL") ?: "https://gist.githubusercontent.com/iMayhem/abbb593bdcd0bfc3d54a6284e81cc880/raw/scrapers.json"
             try {
-                val resp = client.newCall(Request.Builder().url("$configUrl?t=${System.currentTimeMillis()}").build()).execute()
-                if (resp.isSuccessful) {
-                    val body = resp.body?.string() ?: "{}"
-                    call.respondText(body, ContentType.Application.Json)
-                } else {
-                    call.respondText("""{"providers":[],"preferences":{"prioritizeBy":"latency","maxPreferredSizeGb":3.0}}""", ContentType.Application.Json)
+                client.newCall(Request.Builder().url("$configUrl?t=${System.currentTimeMillis()}").build()).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val body = resp.body?.string() ?: "{}"
+                        call.respondText(body, ContentType.Application.Json)
+                    } else {
+                        call.respondText("""{"providers":[],"preferences":{"prioritizeBy":"latency","maxPreferredSizeGb":3.0}}""", ContentType.Application.Json)
+                    }
                 }
             } catch (e: Exception) {
                 call.respondText("""{"providers":[],"preferences":{"prioritizeBy":"latency","maxPreferredSizeGb":3.0}}""", ContentType.Application.Json)
@@ -104,8 +107,9 @@ fun Application.configureRouting() {
             var imdbId: String? = null
             try {
                 val url = "https://api.themoviedb.org/3/$mediaType/$tmdbId/external_ids?api_key=$TMDB_API_KEY"
-                val resp = client.newCall(Request.Builder().url(url).build()).execute()
-                if (resp.isSuccessful) imdbId = JSONObject(resp.body?.string() ?: "").optString("imdb_id", null)
+                client.newCall(Request.Builder().url(url).build()).execute().use { resp ->
+                    if (resp.isSuccessful) imdbId = JSONObject(resp.body?.string() ?: "").optString("imdb_id", null)
+                }
             } catch (_: Exception) {}
 
             val streamsList = Collections.synchronizedList(mutableListOf<JSONObject>())
@@ -219,13 +223,13 @@ fun Application.configureRouting() {
                             emitLog("Checking Netflix Mirror...")
                             try {
                                 val main = "https://nfmirror.com"; val mir2 = "https://nfmirror2.org"
-                                val finalId = if (season == null) id else "$id:$season:$episode"
-                                client.newCall(Request.Builder().url("$main/").build()).execute()
-                                val hResp = client.newCall(Request.Builder().url("$main/play.php").post(FormBody.Builder().add("id", finalId).build()).header("X-Requested-With", "XMLHttpRequest").header("Referer", "$main/").build()).execute()
-                                val h = JSONObject(hResp.body?.string() ?: "{}").optString("h", "")
+                                val finalId = if (season == null) id!! else "$id:$season:$episode"
+                                client.newCall(Request.Builder().url("$main/").build()).execute().use { _ -> }
+                                val hRespStr = client.newCall(Request.Builder().url("$main/play.php").post(FormBody.Builder().add("id", finalId).build()).header("X-Requested-With", "XMLHttpRequest").header("Referer", "$main/").build()).execute().use { it.body?.string() ?: "{}" }
+                                val h = JSONObject(hRespStr).optString("h", "")
                                 if (h.isNotEmpty()) {
-                                    val tResp = client.newCall(Request.Builder().url("$mir2/playlist.php?id=$finalId&t=$h&tm=${System.currentTimeMillis()/1000}").header("Referer", "$main/").build()).execute()
-                                    val pJson = JSONArray(tResp.body?.string() ?: "[]")
+                                    val tRespStr = client.newCall(Request.Builder().url("$mir2/playlist.php?id=$finalId&t=$h&tm=${System.currentTimeMillis()/1000}").header("Referer", "$main/").build()).execute().use { it.body?.string() ?: "[]" }
+                                    val pJson = JSONArray(tRespStr)
                                     if (pJson.length() > 0) {
                                         val srcs = pJson.getJSONObject(0).optJSONArray("sources") ?: JSONArray()
                                         for (i in 0 until srcs.length()) {
@@ -251,8 +255,8 @@ fun Application.configureRouting() {
                             try {
                                 val secret = cinemaOSGenerateHash(tmdbId.toInt(), imdbId, season?.toInt(), episode?.toInt())
                                 val cUrl = if (season == null) "https://cinemaos.tech/api/providerv3?type=movie&tmdbId=$tmdbId&imdbId=$imdbId&secret=$secret" else "https://cinemaos.tech/api/providerv3?type=tv&tmdbId=$tmdbId&imdbId=$imdbId&seasonId=$season&episodeId=$episode&secret=$secret"
-                                val cResp = client.newCall(Request.Builder().url(cUrl).header("User-Agent", USER_AGENT).build()).execute()
-                                cinemaOSDecryptResponse(JSONObject(cResp.body?.string() ?: "{}").optString("data", ""))?.let { dec ->
+                                val cRespStr = client.newCall(Request.Builder().url(cUrl).header("User-Agent", USER_AGENT).build()).execute().use { it.body?.string() ?: "{}" }
+                                cinemaOSDecryptResponse(JSONObject(cRespStr).optString("data", ""))?.let { dec ->
                                     val data = JSONArray(dec)
                                     for (i in 0 until data.length()) {
                                         val it = data.getJSONObject(i); val ur = it.optString("url", "")
@@ -282,18 +286,20 @@ fun Application.configureRouting() {
                                 
                                 var body = ""
                                 try {
-                                    val dResp = client.newCall(Request.Builder().url(targetUrl)
+                                    client.newCall(Request.Builder().url(targetUrl)
                                         .header("User-Agent", USER_AGENT)
                                         .header("Accept", "application/json, text/plain, */*")
-                                        .header("Referer", "https://vidjoy.pro/").build()).execute()
-                                    body = dResp.body?.string() ?: ""
+                                        .header("Referer", "https://vidjoy.pro/").build()).execute().use { dResp ->
+                                        body = dResp.body?.string() ?: ""
+                                    }
                                 } catch (_: Exception) {}
 
                                 if (!body.startsWith("{")) {
                                     try {
                                         val mUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1"
-                                        val mResp = client.newCall(Request.Builder().url(targetUrl).header("User-Agent", mUA).build()).execute()
-                                        body = mResp.body?.string() ?: ""
+                                        client.newCall(Request.Builder().url(targetUrl).header("User-Agent", mUA).build()).execute().use { mResp ->
+                                            body = mResp.body?.string() ?: ""
+                                        }
                                     } catch (_: Exception) {}
                                 }
 
@@ -387,12 +393,13 @@ fun Application.configureRouting() {
                             if (Settings.isEnabled(addonKeys[n] ?: "")) {
                                 try {
                                     val url = if (season == null) "$b/stream/movie/$id.json" else "$b/stream/tv/$id:$season:$episode.json"
-                                    val resp = client.newCall(Request.Builder().url(url).build()).execute()
-                                    if (resp.isSuccessful) {
-                                        val sArr = JSONObject(resp.body?.string() ?: "{}").optJSONArray("streams") ?: JSONArray()
-                                        for (i in 0 until sArr.length()) {
-                                            val s = sArr.getJSONObject(i); val su = s.optString("url", "")
-                                            if (su.isNotBlank()) addStream("$n ${s.optString("name")}", su, if (su.contains(".m3u8")) "hls" else "mp4", "Auto", null, addonKeys[n] ?: "")
+                                    client.newCall(Request.Builder().url(url).build()).execute().use { resp ->
+                                        if (resp.isSuccessful) {
+                                            val sArr = JSONObject(resp.body?.string() ?: "{}").optJSONArray("streams") ?: JSONArray()
+                                            for (i in 0 until sArr.length()) {
+                                                val s = sArr.getJSONObject(i); val su = s.optString("url", "")
+                                                if (su.isNotBlank()) addStream("$n ${s.optString("name")}", su, if (su.contains(".m3u8")) "hls" else "mp4", "Auto", null, addonKeys[n] ?: "")
+                                            }
                                         }
                                     }
                                 } catch (_: Exception) {}

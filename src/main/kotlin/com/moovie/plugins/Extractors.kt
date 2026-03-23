@@ -394,7 +394,7 @@ open class GDFlix : ExtractorApi() {
                 val links = document.select("a.btn-success").mapNotNull { it.attr("href") }
                 downloadLinks.addAll(links)
             } catch (e: Exception) {
-                Log.d("Error", e.toString())
+                Log.d("Scraper", e.toString())
             }
         }
         return downloadLinks
@@ -493,7 +493,7 @@ open class GDFlix : ExtractorApi() {
                 }
 
                 else -> {
-                    Log.d("Error", "No Server matched")
+                    Log.d("Scraper", "No Server matched")
                 }
             }
         }
@@ -710,7 +710,7 @@ open class Driveleech : ExtractorApi() {
                 }
 
                 else -> {
-                    Log.d("Error", "No Server matched")
+                    Log.d("Scraper", "No Server matched")
                 }
             }
         }
@@ -814,7 +814,7 @@ open class HubCloud : ExtractorApi() {
                 if(redirectUrl.contains("link=")) redirectUrl = redirectUrl.substringAfter("link=")
                 myCallback(redirectUrl, "[Download]")
             }
-            else { Log.d("Error", "No Server matched") }
+            else { Log.d("Scraper", "No Server matched") }
         }
     }
 }
