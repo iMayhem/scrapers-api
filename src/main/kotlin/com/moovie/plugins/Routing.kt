@@ -133,7 +133,12 @@ fun Application.configureRouting() {
                 return null
             }
             
-            val cacheKey = "scrape:\${id}:\${season ?: \"null\"}:\${episode ?: \"null\"}"
+            // Cache key: always use tmdbId for consistency. Add season/episode for TV series.
+            val cacheKey = if (season == null) {
+                "scrape:movie:$tmdbId"
+            } else {
+                "scrape:tv:$tmdbId:s${season}:e${episode}"
+            }
             var cachedData: JSONArray? = null
             
             if (Redis.isEnabled()) {
