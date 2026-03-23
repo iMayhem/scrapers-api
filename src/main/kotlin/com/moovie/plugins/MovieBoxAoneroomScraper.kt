@@ -100,14 +100,15 @@ private fun getHeaders(method: String, url: String, body: String? = null, accept
     else
         generateXTrSignature("GET", accept, ct, url)
     return mapOf(
-        "User-Agent" to AONEROOM_UA,
-        "Accept" to accept,
-        "Content-Type" to ct,
-        "Connection" to "keep-alive",
-        "X-Client-Token" to xct,
-        "X-Tr-Signature" to xtr,
-        "X-Client-Info" to X_CLIENT_INFO,
-        "X-Client-Status" to "0",
+        "user-agent" to AONEROOM_UA,
+        "accept" to accept,
+        "content-type" to ct,
+        "connection" to "keep-alive",
+        "x-client-token" to xct,
+        "x-tr-signature" to xtr,
+        "x-client-info" to X_CLIENT_INFO,
+        "x-client-status" to "0",
+        "x-play-mode" to "2"
     )
 }
 
@@ -126,7 +127,8 @@ private fun searchMovieBox(title: String, year: Int?, client: OkHttpClient): Str
 
         val respStr = client.newCall(req.build()).execute().use { it.body?.string() ?: return null }
         val root = JSONObject(respStr)
-        val results = root.optJSONObject("data")?.optJSONArray("results") ?: return null
+        val data = root.optJSONObject("data") ?: return null
+        val results = data.optJSONArray("results") ?: return null
 
         val candidates = mutableListOf<Pair<String, String>>() // (subjectId, title)
         for (i in 0 until results.length()) {
@@ -142,7 +144,7 @@ private fun searchMovieBox(title: String, year: Int?, client: OkHttpClient): Str
 
         if (candidates.isEmpty()) return null
 
-        // Prefer exact title match first, then year-match, finally fallback to first result
+        // Prefer exact title match first, then fallback to first result
         val normTitle = title.trim().lowercase()
         val exactMatch = candidates.firstOrNull { (_, t) -> t.trim().lowercase() == normTitle }
         if (exactMatch != null) return exactMatch.first
@@ -155,14 +157,16 @@ private fun searchMovieBox(title: String, year: Int?, client: OkHttpClient): Str
 
 /**
  * Fetch play-info from MovieBox and return stream objects ready to add.
- * Each element: Triple(serverName, url, type["hls"|"mp4"|"dash"])
+ * Each element: {serverName, url, type, cookie}
  */
+data class MovieBoxStream(val server: String, val url: String, val type: String, val cookie: String?)
+
 private fun fetchMovieBoxPlayInfo(
     subjectId: String,
     season: Int,
     episode: Int,
     client: OkHttpClient,
-): List<Triple<String, String, String>> {
+): List<MovieBoxStream> {
     val url = "$AONEROOM_BASE/wefeed-mobile-bff/subject-api/play-info?subjectId=$subjectId&se=$season&ep=$episode"
     val headers = getHeaders("GET", url)
 
@@ -175,7 +179,7 @@ private fun fetchMovieBoxPlayInfo(
         val playData = root.optJSONObject("data") ?: return emptyList()
         val streams = playData.optJSONArray("streams") ?: return emptyList()
 
-        val results = mutableListOf<Triple<String, String, String>>()
+        val results = mutableListOf<MovieBoxStream>()
         for (i in 0 until streams.length()) {
             val s = streams.getJSONObject(i)
             val streamUrl = s.optString("url", "")
@@ -183,6 +187,7 @@ private fun fetchMovieBoxPlayInfo(
             val format = s.optString("format", "")
             val resolutions = s.optString("resolutions", "Auto")
             val quality = resolutions.ifEmpty { "Auto" }
+            val signCookie = s.optString("signCookie", "").takeIf { it.isNotEmpty() }
 
             val type = when {
                 streamUrl.contains(".mpd", ignoreCase = true) -> "dash"
@@ -193,8 +198,7 @@ private fun fetchMovieBoxPlayInfo(
                 else -> "hls"
             }
 
-            val serverName = "MovieBox [$quality]"
-            results.add(Triple(serverName, streamUrl, type))
+            results.add(MovieBoxStream("MovieBox [$quality]", streamUrl, type, signCookie))
         }
         results
     } catch (_: Exception) {
@@ -221,7 +225,10 @@ suspend fun invokeMovieBoxAoneroom(
     val ep = episode ?: 0
 
     val streams = fetchMovieBoxPlayInfo(subjectId, se, ep, client)
-    for ((server, url, type) in streams) {
-        addStream(server, url, type, "Auto", mapOf("Referer" to AONEROOM_BASE), "p_moviebox_aoneroom")
+    for (s in streams) {
+        val headers = mutableMapOf("Referer" to AONEROOM_BASE)
+        if (s.cookie != null) headers["Cookie"] = s.cookie
+        addStream(s.server, s.url, s.type, "Auto", headers, "p_moviebox_aoneroom")
     }
 }
+
