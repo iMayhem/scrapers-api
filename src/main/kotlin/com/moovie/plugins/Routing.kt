@@ -144,6 +144,7 @@ fun Application.configureRouting() {
             }
 
             if (cachedData != null && cachedData!!.length() > 0) {
+                println("Redis: Cache hit for \${id}! Serving \${cachedData!!.length()} streams.")
                 emitLog("Cache hit! Serving \${cachedData!!.length()} streams from Redis.")
                 if (isStreaming) {
                     call.respondTextWriter(ContentType.Application.Json) {
