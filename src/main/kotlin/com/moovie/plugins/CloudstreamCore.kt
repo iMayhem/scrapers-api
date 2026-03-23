@@ -490,7 +490,7 @@ abstract class ExtractorApi {
 
 // Mock methods for ID adding (used in ported code)
 fun LoadResponse.addAniListId(id: Int?) {}
-fun LoadResponse.addImdbId(id: String?) {}
+
 fun LoadResponse.addMalId(id: Int?) {}
 
 val languageMap = mapOf(

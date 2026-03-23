@@ -125,48 +125,28 @@ fun Application.configureRouting() {
         return@get
       }
 
-      // Use Query Params if provided
-      var imdbId: String? = call.request.queryParameters["imdbId"]
-      var mediaTitle: String? = call.request.queryParameters["title"]
-      var mediaYear: Int? = call.request.queryParameters["year"]?.toIntOrNull()
+      // TMDB lookup for title/year for MovieBox search
+      var mediaTitle: String? = null
+      var mediaYear: Int? = null
 
-      if (imdbId == null) {
-        try {
-          val url =
-                  "https://api.themoviedb.org/3/$mediaType/$tmdbId/external_ids?api_key=$TMDB_API_KEY"
-          client.newCall(Request.Builder().url(url).build()).execute().use { resp ->
-             if (resp.isSuccessful) {
-               val json = JSONObject(resp.body?.string() ?: "{}")
-               imdbId = json.optString("imdb_id", null).takeIf { !it.isNullOrBlank() }
-             }
+      try {
+        val detailUrl = "https://api.themoviedb.org/3/$mediaType/$tmdbId?api_key=$TMDB_API_KEY"
+        client.newCall(Request.Builder().url(detailUrl).build()).execute().use { resp ->
+          if (resp.isSuccessful) {
+            val json = JSONObject(resp.body?.string() ?: "{}")
+            mediaTitle =
+                    json.optString(if (mediaType == "movie") "title" else "name", null).takeIf {
+                      !it.isNullOrBlank()
+                    }
+            val dateStr = json.optString(if (mediaType == "movie") "release_date" else "first_air_date", "")
+            mediaYear = dateStr.take(4).toIntOrNull()
           }
-        } catch (e: Exception) {
-           println("TMDB External IDs Error: $e")
         }
+      } catch (e: Exception) {
+          println("TMDB Detail Error: $e")
       }
 
-      if (mediaTitle == null) {
-        try {
-          val detailUrl = "https://api.themoviedb.org/3/$mediaType/$tmdbId?api_key=$TMDB_API_KEY"
-          client.newCall(Request.Builder().url(detailUrl).build()).execute().use { resp ->
-            if (resp.isSuccessful) {
-              val json = JSONObject(resp.body?.string() ?: "{}")
-              mediaTitle =
-                      json.optString(if (mediaType == "movie") "title" else "name", null).takeIf {
-                        !it.isNullOrBlank()
-                      }
-              if (mediaYear == null) {
-                  val dateStr = json.optString(if (mediaType == "movie") "release_date" else "first_air_date", "")
-                  mediaYear = dateStr.take(4).toIntOrNull()
-              }
-            }
-          }
-        } catch (e: Exception) {
-            println("TMDB Detail Error: $e")
-        }
-      }
-
-      val id = if (imdbId.isNullOrEmpty()) tmdbId else imdbId
+      val id = tmdbId
 
       val streamsList = Collections.synchronizedList(mutableListOf<JSONObject>())
       val eventChannel =

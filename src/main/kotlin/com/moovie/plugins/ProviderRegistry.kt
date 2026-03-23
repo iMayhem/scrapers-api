@@ -16,9 +16,6 @@ data class AllLoadLinksData(
     val title: String? = null,
     val season: Int? = null,
     val episode: Int? = null,
-    val imdbTitle: String? = null,
-    val imdbSeason: Int? = null,
-    val imdbEpisode: Int? = null,
     val isCasting: Boolean = false
 )
 
@@ -41,7 +38,7 @@ object ProviderRegistry {
         ProviderDef(
             key = "p_moviebox", displayName = "Moviebox",
             executeStandard = { res, subCb, cb -> CineStreamExtractors.invokeMoviebox(res.title, res.season, res.episode, subCb, cb) },
-            executeAnime = { res, subCb, cb -> CineStreamExtractors.invokeMoviebox(res.imdbTitle, res.imdbSeason, res.imdbEpisode, subCb, cb) }
+            executeAnime = { res, subCb, cb -> CineStreamExtractors.invokeMoviebox(res.title, res.season, res.episode, subCb, cb) }
         )
     )
 
