@@ -226,7 +226,10 @@ object CineStreamExtractors {
         val items = unwrapData(searchObj).optJSONArray("items") ?: return
 
 
-        val titleMatchRegex = """^${Regex.escape(title ?: "")}(?: \[([^\]]+)\])?$""".toRegex(RegexOption.IGNORE_CASE)
+        // Improved Lenient Regex: Matches title exactly OR title followed by year, language, or common suffixes
+        // Example: "Shelter", "Shelter (2026)", "Shelter [Hindi]", etc.
+        val escapedTitle = Regex.escape(title ?: "")
+        val titleMatchRegex = """^$escapedTitle(?:\s*[\(\[]\d{4}[\)\]])?(?:\s*\[([^\]]+)\])?$""".toRegex(RegexOption.IGNORE_CASE)
         val uniqueIdsWithLang = mutableMapOf<String, String>()
 
         for (i in 0 until items.length()) {
@@ -235,11 +238,13 @@ object CineStreamExtractors {
             if (id.isEmpty()) continue
 
             val rawTitle = item.optString("title", "")
-            val cleanTitle = rawTitle.replace(SEASON_SUFFIX_REGEX, "")
+            val cleanTitle = rawTitle.replace(SEASON_SUFFIX_REGEX, "").trim()
+            
+            // Try exact match or lenient match
             val matchResult = titleMatchRegex.find(cleanTitle)
 
-            if (matchResult != null) {
-                val language = matchResult.groups[1]?.value ?: "Original"
+            if (matchResult != null || cleanTitle.equals(title, ignoreCase = true)) {
+                val language = matchResult?.groups?.get(1)?.value ?: "Original"
                 uniqueIdsWithLang.putIfAbsent(id, language)
             }
         }
