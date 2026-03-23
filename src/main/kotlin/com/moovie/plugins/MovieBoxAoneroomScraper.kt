@@ -170,7 +170,13 @@ private fun searchMovieBox(title: String, year: Int?, client: OkHttpClient): Str
  * Fetch play-info from MovieBox and return stream objects ready to add.
  * Each element: {serverName, url, type, cookie}
  */
-data class MovieBoxStream(val server: String, val url: String, val type: String, val cookie: String?)
+data class MovieBoxStream(
+    val server: String,
+    val url: String,
+    val type: String,
+    val cookie: String?,
+    val quality: String,
+)
 
 private fun fetchMovieBoxPlayInfo(
     subjectId: String,
@@ -190,7 +196,57 @@ private fun fetchMovieBoxPlayInfo(
         println("[MovieBox] Play Info Response: $respStr")
         val root = JSONObject(respStr)
         val playData = root.optJSONObject("data") ?: return emptyList()
-        val streams = playData.optJSONArray("streams") ?: return emptyList()
+        val streams = playData.optJSONArray("streams")
+
+        // The Cloudstream provider has a fallback when `streams` is missing/empty.
+        // When that happens here, we also fall back to `resourceDetectors.resolutionList`.
+        if (streams == null || streams.length() == 0) {
+            println("[MovieBox] No streams in play-info, falling back to resourceDetectors...")
+
+            val fallbackUrl = "$AONEROOM_BASE/wefeed-mobile-bff/subject-api/get?subjectId=$subjectId"
+            val fallbackHeaders = getHeaders("GET", fallbackUrl)
+
+            return try {
+                val fbReq = Request.Builder().url(fallbackUrl)
+                fallbackHeaders.forEach { (k, v) -> fbReq.header(k, v) }
+
+                val fallbackRespStr = client.newCall(fbReq.build()).execute().use { it.body?.string() ?: return emptyList() }
+                println("[MovieBox] Fallback (subject/get) Response: $fallbackRespStr")
+
+                val fallbackRoot = JSONObject(fallbackRespStr)
+                val dataObj = fallbackRoot.optJSONObject("data") ?: return emptyList()
+                val detectors = dataObj.optJSONArray("resourceDetectors") ?: return emptyList()
+
+                val results = mutableListOf<MovieBoxStream>()
+                for (i in 0 until detectors.length()) {
+                    val detector = detectors.getJSONObject(i)
+                    val resolutionList = detector.optJSONArray("resolutionList") ?: continue
+
+                    for (j in 0 until resolutionList.length()) {
+                        val video = resolutionList.getJSONObject(j)
+                        val link = video.optString("resourceLink", "").takeIf { it.isNotBlank() } ?: continue
+
+                        val qualityInt = runCatching { video.optInt("resolution", 0) }.getOrDefault(0)
+                        val qualityLabel = if (qualityInt > 0) qualityInt.toString() else "Auto"
+
+                        val type = when {
+                            link.contains(".mpd", ignoreCase = true) -> "dash"
+                            link.contains(".m3u8", ignoreCase = true) -> "hls"
+                            link.contains(".mp4", ignoreCase = true) || link.contains(".mkv", ignoreCase = true) -> "mp4"
+                            else -> "mp4"
+                        }
+
+                        println("[MovieBox] Found fallback stream: $link (Quality: $qualityLabel)")
+                        results.add(MovieBoxStream("MovieBox [$qualityLabel]", link, type, null, qualityLabel))
+                    }
+                }
+
+                results
+            } catch (e: Exception) {
+                println("[MovieBox] Play info fallback error: ${e.message}")
+                emptyList()
+            }
+        }
 
         val results = mutableListOf<MovieBoxStream>()
         for (i in 0 until streams.length()) {
@@ -205,14 +261,14 @@ private fun fetchMovieBoxPlayInfo(
             val type = when {
                 streamUrl.contains(".mpd", ignoreCase = true) -> "dash"
                 format.equals("HLS", ignoreCase = true) ||
-                        streamUrl.contains(".m3u8", ignoreCase = true) -> "hls"
+                    streamUrl.contains(".m3u8", ignoreCase = true) -> "hls"
                 streamUrl.contains(".mp4", ignoreCase = true) ||
-                        streamUrl.contains(".mkv", ignoreCase = true) -> "mp4"
+                    streamUrl.contains(".mkv", ignoreCase = true) -> "mp4"
                 else -> "hls"
             }
 
             println("[MovieBox] Found stream: $streamUrl (Quality: $quality, Cookie: ${signCookie != null})")
-            results.add(MovieBoxStream("MovieBox [$quality]", streamUrl, type, signCookie))
+            results.add(MovieBoxStream("MovieBox [$quality]", streamUrl, type, signCookie, quality))
         }
         results
     } catch (e: Exception) {
@@ -243,7 +299,7 @@ suspend fun invokeMovieBoxAoneroom(
     for (s in streams) {
         val headers = mutableMapOf("Referer" to AONEROOM_BASE)
         if (s.cookie != null) headers["Cookie"] = s.cookie
-        addStream(s.server, s.url, s.type, "Auto", headers, "p_moviebox_aoneroom")
+        addStream(s.server, s.url, s.type, s.quality, headers, "p_moviebox_aoneroom")
     }
 }
 
