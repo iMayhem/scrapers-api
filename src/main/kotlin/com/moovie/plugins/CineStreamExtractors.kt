@@ -54,65 +54,39 @@ object CineStreamExtractors {
         return results
     }
 
-    suspend fun getCinemetaHome(type: String = "movie"): List<JSONObject> {
+    suspend fun getCinemetaHome(type: String = "movie", catalogId: String = "top"): List<JSONObject> {
         val baseUrl = "https://v3-cinemeta.strem.io"
-        val catalogId = if (type == "movie") "top" else "top"
         val url = "$baseUrl/catalog/$type/$catalogId.json"
-        
-        val responseString = try {
-            app.get(url).text
-        } catch (e: Exception) {
-            return emptyList()
-        }
-
+        val responseString = try { app.get(url).text } catch (e: Exception) { return emptyList() }
         val obj = try { JSONObject(responseString) } catch (e: Exception) { return emptyList() }
         val metas = obj.optJSONArray("metas") ?: return emptyList()
-        
         val results = mutableListOf<JSONObject>()
-        for (i in 0 until metas.length()) {
-            metas.optJSONObject(i)?.let { results.add(it) }
-        }
+        for (i in 0 until metas.length()) { metas.optJSONObject(i)?.let { results.add(it) } }
         return results
     }
 
-    suspend fun searchCinemeta(query: String, type: String = "movie"): List<JSONObject> {
-        val baseUrl = "https://v3-cinemeta.strem.io"
-        val url = "$baseUrl/catalog/$type/search/search=${URLEncoder.encode(query, "UTF-8")}.json"
-        
-        val responseString = try {
-            app.get(url).text
-        } catch (e: Exception) {
-            return emptyList()
-        }
-
+    suspend fun getKitsuHome(): List<JSONObject> {
+        val baseUrl = "https://anime-kitsu.strem.fun"
+        val url = "$baseUrl/catalog/anime/kitsu-anime-trending.json"
+        val responseString = try { app.get(url).text } catch (e: Exception) { return emptyList() }
         val obj = try { JSONObject(responseString) } catch (e: Exception) { return emptyList() }
         val metas = obj.optJSONArray("metas") ?: return emptyList()
-        
         val results = mutableListOf<JSONObject>()
-        for (i in 0 until metas.length()) {
-            metas.optJSONObject(i)?.let { results.add(it) }
-        }
+        for (i in 0 until metas.length()) { metas.optJSONObject(i)?.let { results.add(it) } }
         return results
     }
 
-    suspend fun getCinemetaDetails(type: String, id: String): JSONObject? {
-        val baseUrl = "https://v3-cinemeta.strem.io"
-        val url = "$baseUrl/meta/$type/$id.json"
-        
-        val responseString = try {
-            app.get(url).text
-        } catch (e: Exception) {
-            return null
-        }
-
+    suspend fun getKitsuDetails(id: String): JSONObject? {
+        val baseUrl = "https://anime-kitsu.strem.fun"
+        val url = "$baseUrl/meta/anime/$id.json"
+        val responseString = try { app.get(url).text } catch (e: Exception) { return null }
         val obj = try { JSONObject(responseString) } catch (e: Exception) { return null }
         return obj.optJSONObject("meta")
     }
 
-    suspend fun getCinemetaHome(type: String = "movie"): List<JSONObject> {
-        val baseUrl = "https://v3-cinemeta.strem.io"
-        val catalogId = "top"
-        val url = "$baseUrl/catalog/$type/$catalogId.json"
+    suspend fun searchKitsu(query: String): List<JSONObject> {
+        val baseUrl = "https://anime-kitsu.strem.fun"
+        val url = "$baseUrl/catalog/anime/kitsu-anime-trending/search=${URLEncoder.encode(query, "UTF-8")}.json"
         val responseString = try { app.get(url).text } catch (e: Exception) { return emptyList() }
         val obj = try { JSONObject(responseString) } catch (e: Exception) { return emptyList() }
         val metas = obj.optJSONArray("metas") ?: return emptyList()
