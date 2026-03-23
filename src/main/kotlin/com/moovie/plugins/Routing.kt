@@ -86,95 +86,68 @@ fun Application.configureRouting() {
       val query = call.request.queryParameters["query"]
       val type = call.request.queryParameters["type"] ?: "movie"
       if (query.isNullOrBlank()) {
-        call.respondText(
-          """{"error":"Missing query"}""",
-          ContentType.Application.Json,
-          HttpStatusCode.BadRequest
-        )
+        call.respondText("""{"error":"Missing query"}""", ContentType.Application.Json, HttpStatusCode.BadRequest)
         return@get
       }
-
-      val isTv = type == "tv"
-      val results = CineStreamExtractors.searchMoviebox(query, isTv)
+      val isAnime = type == "anime"
+      val results = if (isAnime) CineStreamExtractors.searchKitsu(query) else CineStreamExtractors.searchCinemeta(query, if (type == "show") "series" else "movie")
       val response = JSONArray()
       results.forEach { item ->
         val obj = JSONObject()
-        obj.put("id", item.optString("subjectId"))
-        obj.put("title", item.optString("title"))
+        val imdbId = item.optString("imdb_id", "")
+        val id = if (imdbId.isNotBlank()) imdbId else item.optString("id", "")
+        obj.put("id", id)
+        obj.put("title", item.optString("name"))
         obj.put("poster", item.optString("poster"))
-        obj.put("year", item.optInt("year", 0))
-        obj.put("type", if (isTv) "show" else "movie")
+        obj.put("year", item.optString("year"))
+        obj.put("type", if (type == "show") "show" else if (type == "anime") "anime" else "movie")
         response.put(obj)
       }
-
-      call.respondText(
-        JSONObject().apply {
-          put("status", "success")
-          put("results", response)
-        }.toString(),
-        ContentType.Application.Json
-      )
-    }
-
-      call.respondText(
-        JSONObject().apply {
-          put("status", "success")
-          put("results", response)
-        }.toString(),
-        ContentType.Application.Json
-      )
+      call.respondText(JSONObject().apply { put("status", "success"); put("results", response) }.toString(), ContentType.Application.Json)
     }
 
     get("/api/home") {
-      val results = CineStreamExtractors.getMovieboxHome()
+      val type = call.request.queryParameters["type"] ?: "movie"
+      val catalogId = call.request.queryParameters["catalog"] ?: "top"
+      
+      val results = when(type) {
+          "anime" -> CineStreamExtractors.getKitsuHome()
+          "show" -> CineStreamExtractors.getCinemetaHome("series", catalogId)
+          else -> CineStreamExtractors.getCinemetaHome("movie", catalogId)
+      }
+
       val response = JSONArray()
       results.forEach { item ->
         val obj = JSONObject()
-        obj.put("id", item.optString("subjectId"))
-        obj.put("title", item.optString("title"))
+        val imdbId = item.optString("imdb_id", "")
+        val id = if (imdbId.isNotBlank()) imdbId else item.optString("id", "")
+        obj.put("id", id)
+        obj.put("title", item.optString("name"))
         obj.put("poster", item.optString("poster"))
-        obj.put("year", item.optInt("year", 0))
-        obj.put("type", if (item.optInt("subjectType") == 2) "show" else "movie")
+        obj.put("year", item.optString("year"))
+        obj.put("type", if (type == "show") "show" else if (type == "anime") "anime" else "movie")
         response.put(obj)
       }
-
-      call.respondText(
-        JSONObject().apply {
-          put("status", "success")
-          put("results", response)
-        }.toString(),
-        ContentType.Application.Json
-      )
+      call.respondText(JSONObject().apply { put("status", "success"); put("results", response) }.toString(), ContentType.Application.Json)
     }
 
     get("/api/details") {
       val id = call.request.queryParameters["id"]
+      val type = call.request.queryParameters["type"] ?: "movie"
       if (id.isNullOrBlank()) {
-        call.respondText(
-          """{"error":"Missing id"}""",
-          ContentType.Application.Json,
-          HttpStatusCode.BadRequest
-        )
+        call.respondText("""{"error":"Missing id"}""", ContentType.Application.Json, HttpStatusCode.BadRequest)
         return@get
       }
-
-      val details = CineStreamExtractors.getMovieboxDetail(id)
+      val details = when {
+          id.startsWith("kitsu:") -> CineStreamExtractors.getKitsuDetails(id)
+          id.startsWith("tt") -> CineStreamExtractors.getCinemetaDetails(if (type == "show") "series" else "movie", id)
+          else -> CineStreamExtractors.getMovieboxDetail(id)
+      }
       if (details == null) {
-        call.respondText(
-          """{"error":"Details not found"}""",
-          ContentType.Application.Json,
-          HttpStatusCode.NotFound
-        )
+        call.respondText("""{"error":"Details not found"}""", ContentType.Application.Json, HttpStatusCode.NotFound)
         return@get
       }
-
-      call.respondText(
-        JSONObject().apply {
-          put("status", "success")
-          put("details", details)
-        }.toString(),
-        ContentType.Application.Json
-      )
+      call.respondText(JSONObject().apply { put("status", "success"); put("details", details) }.toString(), ContentType.Application.Json)
     }
 
     get("/api/config") {
@@ -209,8 +182,6 @@ fun Application.configureRouting() {
       val episode = call.request.queryParameters["episode"]
       val isStreaming = call.request.queryParameters["stream"] == "true"
       var mediaTitle = call.request.queryParameters["title"]
-      var mediaYear = call.request.queryParameters["year"]?.toIntOrNull()
-      val mediaType = if (season == null) "movie" else "tv"
 
       if (mediaTitle.isNullOrBlank()) {
         call.respondText(
