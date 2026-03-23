@@ -8,7 +8,8 @@ import io.ktor.server.plugins.cors.routing.*
 import io.ktor.http.HttpMethod
 
 fun main() {
-    embeddedServer(Netty, port = 7860, host = "0.0.0.0", module = Application::module)
+    val port = System.getenv("PORT")?.toInt() ?: 7860
+    embeddedServer(Netty, port = port, host = "0.0.0.0", module = Application::module)
         .start(wait = true)
 }
 

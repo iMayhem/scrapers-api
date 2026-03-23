@@ -28,8 +28,8 @@ import java.util.Base64
 private const val PING_TIMEOUT_MS = 3000L
 
 // ── Stream URL Token Vault ─────────────────────────────────────────────
-// Secret key material — change this to a long random string in production
-private const val TOKEN_SECRET = "m00v1e_s3cr3t_k3y_ch4ng3_th1s_1n_pr0d"
+// Secret key material — should be set via environment variable in production
+private val TOKEN_SECRET = System.getenv("TOKEN_SECRET") ?: "m00v1e_s3cr3t_k3y_ch4ng3_th1s_1n_pr0d"
 private const val TOKEN_TTL_MS = 120_000L // 2 minutes
 
 private fun deriveKey(): SecretKeySpec {
