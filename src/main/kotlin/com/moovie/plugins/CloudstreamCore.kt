@@ -6,6 +6,9 @@ import okhttp3.FormBody
 import okhttp3.Response
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.CookieJar
+import okhttp3.Cookie
+import okhttp3.HttpUrl
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONException
@@ -180,7 +183,22 @@ data class Episode(
 // ═══════════════════════════════════════════════
 
 object app {
-    val client = OkHttpClient()
+    private val cookieJar = object : CookieJar {
+        private val storage = java.util.concurrent.ConcurrentHashMap<String, List<Cookie>>()
+        override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+            storage[url.host] = cookies
+        }
+        override fun loadForRequest(url: HttpUrl): List<Cookie> {
+            return storage[url.host] ?: listOf()
+        }
+    }
+
+    val client = OkHttpClient.Builder()
+        .cookieJar(cookieJar)
+        .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
+
     val gson = Gson()
 
     class NiceResponse(val resp: Response) {

@@ -64,8 +64,8 @@ private fun measurePing(
 fun Application.configureRouting() {
   val client =
           OkHttpClient.Builder()
-                  .connectTimeout(25, TimeUnit.SECONDS)
-                  .readTimeout(25, TimeUnit.SECONDS)
+                  .connectTimeout(5, TimeUnit.SECONDS)
+                  .readTimeout(5, TimeUnit.SECONDS)
                   .followRedirects(true)
                   .cookieJar(
                           object : CookieJar {
@@ -125,25 +125,48 @@ fun Application.configureRouting() {
         return@get
       }
 
-      // IMDB ID Lookup + title/year for MovieBox
-      var mediaTitle: String? = null
-      try {
-        val url =
-                "https://api.themoviedb.org/3/$mediaType/$tmdbId/external_ids?api_key=$TMDB_API_KEY"
-        client.newCall(Request.Builder().url(url).build()).execute().use { _ -> }
-      } catch (_: Exception) {}
-      try {
-        val detailUrl = "https://api.themoviedb.org/3/$mediaType/$tmdbId?api_key=$TMDB_API_KEY"
-        client.newCall(Request.Builder().url(detailUrl).build()).execute().use { resp ->
-          if (resp.isSuccessful) {
-            val json = JSONObject(resp.body?.string() ?: "{}")
-            mediaTitle =
-                    json.optString(if (mediaType == "movie") "title" else "name", null).takeIf {
-                      !it.isNullOrBlank()
-                    }
+      // Use Query Params if provided
+      var imdbId: String? = call.request.queryParameters["imdbId"]
+      var mediaTitle: String? = call.request.queryParameters["title"]
+      var mediaYear: Int? = call.request.queryParameters["year"]?.toIntOrNull()
+
+      if (imdbId == null) {
+        try {
+          val url =
+                  "https://api.themoviedb.org/3/$mediaType/$tmdbId/external_ids?api_key=$TMDB_API_KEY"
+          client.newCall(Request.Builder().url(url).build()).execute().use { resp ->
+             if (resp.isSuccessful) {
+               val json = JSONObject(resp.body?.string() ?: "{}")
+               imdbId = json.optString("imdb_id", null).takeIf { !it.isNullOrBlank() }
+             }
           }
+        } catch (e: Exception) {
+           println("TMDB External IDs Error: $e")
         }
-      } catch (_: Exception) {}
+      }
+
+      if (mediaTitle == null) {
+        try {
+          val detailUrl = "https://api.themoviedb.org/3/$mediaType/$tmdbId?api_key=$TMDB_API_KEY"
+          client.newCall(Request.Builder().url(detailUrl).build()).execute().use { resp ->
+            if (resp.isSuccessful) {
+              val json = JSONObject(resp.body?.string() ?: "{}")
+              mediaTitle =
+                      json.optString(if (mediaType == "movie") "title" else "name", null).takeIf {
+                        !it.isNullOrBlank()
+                      }
+              if (mediaYear == null) {
+                  val dateStr = json.optString(if (mediaType == "movie") "release_date" else "first_air_date", "")
+                  mediaYear = dateStr.take(4).toIntOrNull()
+              }
+            }
+          }
+        } catch (e: Exception) {
+            println("TMDB Detail Error: $e")
+        }
+      }
+
+      val id = if (imdbId.isNullOrEmpty()) tmdbId else imdbId
 
       val streamsList = Collections.synchronizedList(mutableListOf<JSONObject>())
       val eventChannel =
@@ -326,9 +349,9 @@ fun Application.configureRouting() {
                     val success = Redis.set(cacheKey, streamsToCache.toString(), 21600)
                     if (success)
                             println(
-                                    "Redis: Successfully cached \${streamsToCache.length()} streams for \${id}"
+                                    "Redis: Successfully cached ${streamsToCache.length()} streams for $id"
                             )
-                    else println("Redis: Failed to write cache for \${id}")
+                    else println("Redis: Failed to write cache for $id")
                   }
                 }
               }

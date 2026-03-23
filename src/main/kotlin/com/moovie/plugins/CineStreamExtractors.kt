@@ -45,8 +45,12 @@ object CineStreamExtractors {
             )
         ).text
 
-        val searchObj = try { JSONObject(searchResponseString) } catch (e: Exception) { return }
+        val searchObj = try { JSONObject(searchResponseString) } catch (e: Exception) { 
+            return 
+        }
+
         val items = unwrapData(searchObj).optJSONArray("items") ?: return
+
 
         val titleMatchRegex = """^${Regex.escape(title ?: "")}(?: \[([^\]]+)\])?$""".toRegex(RegexOption.IGNORE_CASE)
         val uniqueIdsWithLang = mutableMapOf<String, String>()
@@ -67,6 +71,7 @@ object CineStreamExtractors {
         }
 
         if (uniqueIdsWithLang.isEmpty()) return
+
 
         uniqueIdsWithLang.forEach { (subjectId, language) ->
             val detailUrl = "$BASE_URL/wefeed-h5-bff/web/subject/detail?subjectId=${subjectId}"
