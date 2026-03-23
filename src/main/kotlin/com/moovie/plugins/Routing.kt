@@ -128,6 +128,45 @@ fun Application.configureRouting() {
                 if (mbMatch != null) return mbMatch.groupValues[1].toDoubleOrNull()?.div(1024.0)
                 return null
             }
+            
+            val cacheKey = "scrape:\${id}:\${season ?: \"null\"}:\${episode ?: \"null\"}"
+            var cachedData: JSONArray? = null
+            
+            if (Redis.isEnabled()) {
+                val cachedString = Redis.get(cacheKey)
+                if (!cachedString.isNullOrBlank()) {
+                    try {
+                        cachedData = JSONArray(cachedString)
+                    } catch (e: Exception) {
+                        emitLog("Warning: Failed to parse cached data")
+                    }
+                }
+            }
+
+            if (cachedData != null && cachedData!!.length() > 0) {
+                emitLog("Cache hit! Serving \${cachedData!!.length()} streams from Redis.")
+                if (isStreaming) {
+                    call.respondTextWriter(ContentType.Application.Json) {
+                        for (i in 0 until cachedData!!.length()) {
+                            val streamObj = cachedData!!.getJSONObject(i)
+                            // Re-emit each stream event
+                            write(streamObj.apply { put("msgType", "stream") }.toString() + "\n")
+                            flush()
+                            delay(10) // Small delay to ensure client can process
+                        }
+                    }
+                } else {
+                    call.respondText(JSONObject().apply {
+                        put("provider", "Antigravity Mega-Aggregator v4")
+                        put("status", "success")
+                        put("total", cachedData!!.length())
+                        put("stream", cachedData)
+                        put("cached", true)
+                    }.toString(2), ContentType.Application.Json)
+                }
+                return@get
+            }
+
 
             fun createStreamObj(
                 server: String,
@@ -374,16 +413,42 @@ fun Application.configureRouting() {
                 }
             } else {
                 job.join()
-                // Final Response (Legacy)
                 val streams = JSONArray()
                 streamsList.forEach { streams.put(it) }
 
-                call.respondText(JSONObject().apply {
-                    put("provider", "Antigravity Mega-Aggregator v4")
-                    put("status", if (streams.length() > 0) "success" else "failed")
-                    put("total", streams.length())
-                    put("stream", streams)
-                }.toString(2), ContentType.Application.Json)
+                if (Redis.isEnabled() && streams.length() > 0) {
+                    // Cache results for 6 hours (21600 seconds)
+                    val success = Redis.set(cacheKey, streams.toString(), 21600)
+                    if (success) emitLog("Saved \${streams.length()} streams to Redis cache (6h TTL).")
+                }
+
+                if (isStreaming) {
+                    // Nothing left to write, the eventChannel is closed and handled below
+                } else {
+                    call.respondText(JSONObject().apply {
+                        put("provider", "Antigravity Mega-Aggregator v4")
+                        put("status", if (streams.length() > 0) "success" else "failed")
+                        put("total", streams.length())
+                        put("stream", streams)
+                    }.toString(2), ContentType.Application.Json)
+                }
+            }
+
+            if (isStreaming) {
+                call.respondTextWriter(ContentType.Application.Json) {
+                    for (event in eventChannel!!) {
+                        write(event.toString() + "\n")
+                        flush()
+                    }
+                    
+                    // After streaming is done, save to cache
+                    val streamsToCache = JSONArray()
+                    streamsList.forEach { streamsToCache.put(it) }
+                    
+                    if (Redis.isEnabled() && streamsToCache.length() > 0) {
+                        Redis.set(cacheKey, streamsToCache.toString(), 21600)
+                    }
+                }
             }
         }
 
