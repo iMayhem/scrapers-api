@@ -103,12 +103,28 @@ fun Application.configureRouting() {
                 return@get
             }
 
-            // IMDB ID Lookup
+            // IMDB ID Lookup + title/year for MovieBox
             var imdbId: String? = null
+            var mediaTitle: String? = null
+            var mediaYear: Int? = null
             try {
                 val url = "https://api.themoviedb.org/3/$mediaType/$tmdbId/external_ids?api_key=$TMDB_API_KEY"
                 client.newCall(Request.Builder().url(url).build()).execute().use { resp ->
                     if (resp.isSuccessful) imdbId = JSONObject(resp.body?.string() ?: "").optString("imdb_id", null)
+                }
+            } catch (_: Exception) {}
+            try {
+                val detailUrl = "https://api.themoviedb.org/3/$mediaType/$tmdbId?api_key=$TMDB_API_KEY"
+                client.newCall(Request.Builder().url(detailUrl).build()).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val json = JSONObject(resp.body?.string() ?: "{}")
+                        mediaTitle = json.optString(if (mediaType == "movie") "title" else "name", null)
+                            .takeIf { !it.isNullOrBlank() }
+                        val dateStr = json.optString(
+                            if (mediaType == "movie") "release_date" else "first_air_date", ""
+                        )
+                        mediaYear = dateStr.take(4).toIntOrNull()
+                    }
                 }
             } catch (_: Exception) {}
 
@@ -222,6 +238,23 @@ fun Application.configureRouting() {
                 coroutineScope {
                     val tasks = mutableListOf<Deferred<Unit>>()
 
+                    // 0. MovieBox Aoneroom (default / highest priority)
+                    tasks.add(async {
+                        emitLog("Checking MovieBox...")
+                        try {
+                            invokeMovieBoxAoneroom(
+                                title = mediaTitle,
+                                season = season?.toIntOrNull(),
+                                episode = episode?.toIntOrNull(),
+                                year = mediaYear,
+                                client = client,
+                                addStream = { server, url, type, quality, headers, providerKey ->
+                                    addStream(server, url, type, quality, headers, providerKey)
+                                }
+                            )
+                        } catch (_: Exception) {}
+                    })
+
                     // 1. Core & Premium
                     tasks.add(async {
                         if (Settings.isEnabled("p_netflix")) {
@@ -281,50 +314,8 @@ fun Application.configureRouting() {
                     if (Settings.isEnabled("p_rogmovies")) tasks.add(async { emitLog("Checking RogMovies..."); addStream("RogMovies", "https://rogmovies.fun/?s=$tmdbId", "iframe", "Auto", null, "p_rogmovies") })
                     if (Settings.isEnabled("p_bollywood")) tasks.add(async { emitLog("Checking Gramcinema..."); addStream("Gramcinema", "https://gramcinema.com/?s=$tmdbId", "iframe", "Auto", null, "p_bollywood") })
 
-                    // 3. Wave 5: MovieBox
-                    tasks.add(async {
-                        if (Settings.isEnabled("p_moviebox")) {
-                            emitLog("Checking MovieBox...")
-                            try {
-                                val boxBase = "https://vidjoy.pro/embed/api/fastfetch"
-                                val targetUrl = if (season == null) "$boxBase/$tmdbId?sr=0" else "$boxBase/$tmdbId/$season/$episode?sr=0"
-                                
-                                var body = ""
-                                try {
-                                    client.newCall(Request.Builder().url(targetUrl)
-                                        .header("User-Agent", USER_AGENT)
-                                        .header("Accept", "application/json, text/plain, */*")
-                                        .header("Referer", "https://vidjoy.pro/").build()).execute().use { dResp ->
-                                        body = dResp.body?.string() ?: ""
-                                    }
-                                } catch (_: Exception) {}
+                    // 3. Wave 5 (Removed legacy MovieBox)
 
-                                if (!body.startsWith("{")) {
-                                    try {
-                                        val mUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1"
-                                        client.newCall(Request.Builder().url(targetUrl).header("User-Agent", mUA).build()).execute().use { mResp ->
-                                            body = mResp.body?.string() ?: ""
-                                        }
-                                    } catch (_: Exception) {}
-                                }
-
-                                if (body.startsWith("{")) {
-                                    val bData = JSONObject(body)
-                                    val bSrcs = bData.optJSONArray("url") ?: JSONArray()
-                                    val bRef = bData.optJSONObject("headers")?.optString("Referer", "") ?: ""
-                                    val bHeaders = if (bRef.isNotEmpty()) mapOf("Referer" to bRef) else null
-                                    
-                                    for (i in 0 until bSrcs.length()) {
-                                        val s = bSrcs.getJSONObject(i)
-                                        val su = s.optString("link", "")
-                                        val res = s.optString("resulation", "Auto")
-                                        val st = if (su.contains(".m3u8")) "hls" else "mp4"
-                                        if (su.isNotEmpty()) addStream("MovieBox [$res]", su, st, res, bHeaders, "p_moviebox")
-                                    }
-                                }
-                            } catch (_: Exception) {}
-                        }
-                    })
 
                     // 4. Wave 6: CineStream
                     tasks.add(async {
