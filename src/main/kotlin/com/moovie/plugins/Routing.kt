@@ -22,7 +22,6 @@ import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 
-private const val TMDB_API_KEY = "f02a0c39f2e7a175fec9f673ff440c4e"
 private const val PING_TIMEOUT_MS = 3000L
 
 /** Measure response latency (ms) for direct stream URLs. Returns null on failure or timeout. */
@@ -83,6 +82,101 @@ fun Application.configureRouting() {
   routing {
     get("/") { call.respondText("Moovie Mega-Scraper v4 (40+ Sources) is Live!") }
 
+    get("/api/search") {
+      val query = call.request.queryParameters["query"]
+      val type = call.request.queryParameters["type"] ?: "movie"
+      if (query.isNullOrBlank()) {
+        call.respondText(
+          """{"error":"Missing query"}""",
+          ContentType.Application.Json,
+          HttpStatusCode.BadRequest
+        )
+        return@get
+      }
+
+      val isTv = type == "tv"
+      val results = CineStreamExtractors.searchMoviebox(query, isTv)
+      val response = JSONArray()
+      results.forEach { item ->
+        val obj = JSONObject()
+        obj.put("id", item.optString("subjectId"))
+        obj.put("title", item.optString("title"))
+        obj.put("poster", item.optString("poster"))
+        obj.put("year", item.optInt("year", 0))
+        obj.put("type", if (isTv) "show" else "movie")
+        response.put(obj)
+      }
+
+      call.respondText(
+        JSONObject().apply {
+          put("status", "success")
+          put("results", response)
+        }.toString(),
+        ContentType.Application.Json
+      )
+    }
+
+      call.respondText(
+        JSONObject().apply {
+          put("status", "success")
+          put("results", response)
+        }.toString(),
+        ContentType.Application.Json
+      )
+    }
+
+    get("/api/home") {
+      val results = CineStreamExtractors.getMovieboxHome()
+      val response = JSONArray()
+      results.forEach { item ->
+        val obj = JSONObject()
+        obj.put("id", item.optString("subjectId"))
+        obj.put("title", item.optString("title"))
+        obj.put("poster", item.optString("poster"))
+        obj.put("year", item.optInt("year", 0))
+        obj.put("type", if (item.optInt("subjectType") == 2) "show" else "movie")
+        response.put(obj)
+      }
+
+      call.respondText(
+        JSONObject().apply {
+          put("status", "success")
+          put("results", response)
+        }.toString(),
+        ContentType.Application.Json
+      )
+    }
+
+    get("/api/details") {
+      val id = call.request.queryParameters["id"]
+      if (id.isNullOrBlank()) {
+        call.respondText(
+          """{"error":"Missing id"}""",
+          ContentType.Application.Json,
+          HttpStatusCode.BadRequest
+        )
+        return@get
+      }
+
+      val details = CineStreamExtractors.getMovieboxDetail(id)
+      if (details == null) {
+        call.respondText(
+          """{"error":"Details not found"}""",
+          ContentType.Application.Json,
+          HttpStatusCode.NotFound
+        )
+        return@get
+      }
+
+      call.respondText(
+        JSONObject().apply {
+          put("status", "success")
+          put("details", details)
+        }.toString(),
+        ContentType.Application.Json
+      )
+    }
+
     get("/api/config") {
       val configUrl =
               System.getenv("CONFIG_URL")
@@ -118,45 +212,16 @@ fun Application.configureRouting() {
       var mediaYear = call.request.queryParameters["year"]?.toIntOrNull()
       val mediaType = if (season == null) "movie" else "tv"
 
-      if (tmdbId == null) {
+      if (mediaTitle.isNullOrBlank()) {
         call.respondText(
-                """{"error":"Missing tmdbId"}""",
+                """{"error":"Missing title"}""",
                 ContentType.Application.Json,
                 HttpStatusCode.BadRequest
         )
         return@get
       }
 
-      // TMDB lookup only if title wasn't passed from frontend
-      if (mediaTitle.isNullOrBlank()) {
-        try {
-          val detailUrl = "https://api.themoviedb.org/3/$mediaType/$tmdbId?api_key=$TMDB_API_KEY"
-          client.newCall(Request.Builder().url(detailUrl).build()).execute().use { resp ->
-            if (resp.isSuccessful) {
-              val json = JSONObject(resp.body?.string() ?: "{}")
-              mediaTitle =
-                      json.optString(if (mediaType == "movie") "title" else "name", null).takeIf {
-                        !it.isNullOrBlank()
-                      }
-              val dateStr = json.optString(if (mediaType == "movie") "release_date" else "first_air_date", "")
-              if (mediaYear == null) mediaYear = dateStr.take(4).toIntOrNull()
-            }
-          }
-        } catch (e: Exception) {
-          println("TMDB Detail Error: $e")
-        }
-      }
-
-      if (mediaTitle.isNullOrBlank()) {
-        call.respondText(
-          "{\"status\":\"error\",\"message\":\"TMDB lookup failed for tmdbId=$tmdbId. Check TMDB API key or network connectivity.\"}" ,
-          ContentType.Application.Json,
-          io.ktor.http.HttpStatusCode.InternalServerError
-        )
-        return@get
-      }
-
-      val id = tmdbId
+      val id = tmdbId ?: mediaTitle // Use tmdbId as id if available, otherwise title
 
       val streamsList = Collections.synchronizedList(mutableListOf<JSONObject>())
       val eventChannel =
@@ -182,12 +247,12 @@ fun Application.configureRouting() {
         return null
       }
 
-      // Cache key: always use tmdbId for consistency. Add season/episode for TV series.
+      // Cache key: always use tmdbId/title for consistency. Add season/episode for TV series.
       val cacheKey =
               if (season == null) {
-                "scrape:movie:$tmdbId"
+                "scrape:movie:$id"
               } else {
-                "scrape:tv:$tmdbId:s${season}:e${episode}"
+                "scrape:tv:$id:s${season}:e${episode}"
               }
       var cachedData: JSONArray? = null
 
