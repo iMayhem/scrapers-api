@@ -681,6 +681,6 @@ fun <T> JSONObject.parsedSafe(): T? = null // Stub for complex parsing
 
 fun JSONObject.optString(key: String, fallback: String): String = if (has(key)) getString(key) else fallback
 
-fun String.toHttpUrl() = URL(this)
+fun String.toHttpUrl() = URI(this).toURL()
 val URL.host: String get() = getHost()
 val URL.pathSegments: List<String> get() = path.split("/").filter { it.isNotEmpty() }

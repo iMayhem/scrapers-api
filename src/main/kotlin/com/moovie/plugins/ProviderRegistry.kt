@@ -11,6 +11,17 @@ data class MalSyncData(
     val year: Int?,
     val origin: String
 )
+/** Container for loadLinks call data (Standard and Anime) */
+data class AllLoadLinksData(
+    val title: String? = null,
+    val season: Int? = null,
+    val episode: Int? = null,
+    val imdbTitle: String? = null,
+    val imdbSeason: Int? = null,
+    val imdbEpisode: Int? = null,
+    val isCasting: Boolean = false
+)
+
 
 /** * Defines a provider and its execution logic for Standard, Anime, and MALSync data.
  */
