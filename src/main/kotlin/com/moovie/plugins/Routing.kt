@@ -182,6 +182,7 @@ fun Application.configureRouting() {
       val episode = call.request.queryParameters["episode"]
       val isStreaming = call.request.queryParameters["stream"] == "true"
       var mediaTitle = call.request.queryParameters["title"]
+      val year = call.request.queryParameters["year"]
 
       if (mediaTitle.isNullOrBlank()) {
         call.respondText(
@@ -332,6 +333,7 @@ fun Application.configureRouting() {
                               // Using the updated MovieBox from CineStreamExtractors
                               CineStreamExtractors.invokeMoviebox(
                                       title = mediaTitle,
+                                      year = year,
                                       season = season?.toIntOrNull(),
                                       episode = episode?.toIntOrNull(),
                                       subtitleCallback = { _ ->

@@ -179,6 +179,7 @@ object CineStreamExtractors {
 
     suspend fun invokeMoviebox(
         title: String? = null,
+        year: String? = null,
         season: Int? = null,
         episode: Int? = null,
         subtitleCallback: (SubtitleFile) -> Unit,
@@ -205,11 +206,13 @@ object CineStreamExtractors {
         app.get("$BASE_URL/wefeed-h5-bff/app/get-latest-app-pkgs?app_name=moviebox", headers = baseHeaders)
 
         val subjectType = if (season != null) 2 else 1
+        val searchKeyword = if (year != null) "$title $year" else title
+
         val searchResponseString = app.post(
             "$BASE_URL/wefeed-h5-bff/web/subject/search",
             headers = baseHeaders,
             json = mapOf(
-                "keyword" to title,
+                "keyword" to searchKeyword,
                 "page" to 1,
                 "perPage" to 24,
                 "subjectType" to subjectType

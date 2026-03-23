@@ -37,8 +37,8 @@ object ProviderRegistry {
         // ── Direct HTTP Providers ─────────────────────────────────
         ProviderDef(
             key = "p_moviebox", displayName = "Moviebox",
-            executeStandard = { res, subCb, cb -> CineStreamExtractors.invokeMoviebox(res.title, res.season, res.episode, subCb, cb) },
-            executeAnime = { res, subCb, cb -> CineStreamExtractors.invokeMoviebox(res.title, res.season, res.episode, subCb, cb) }
+            executeStandard = { res, subCb, cb -> CineStreamExtractors.invokeMoviebox(title = res.title, season = res.season, episode = res.episode, subtitleCallback = subCb, callback = cb) },
+            executeAnime = { res, subCb, cb -> CineStreamExtractors.invokeMoviebox(title = res.title, season = res.season, episode = res.episode, subtitleCallback = subCb, callback = cb) }
         )
     )
 
