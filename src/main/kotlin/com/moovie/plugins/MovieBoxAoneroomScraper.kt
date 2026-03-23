@@ -93,16 +93,15 @@ private fun generateXTrSignature(
     return "$ts|2|$sig"
 }
 
-private fun getHeaders(method: String, url: String, body: String? = null, accept: String = "application/json", ct: String = "application/json"): Map<String, String> {
+private fun getHeaders(method: String, url: String, body: String? = null, accept: String = "application/json", contentType: String? = null): Map<String, String> {
     val xct = generateXClientToken()
-    val xtr = if (method == "POST")
-        generateXTrSignature("POST", accept, "application/json; charset=utf-8", url, body)
-    else
-        generateXTrSignature("GET", accept, ct, url)
+    val actualCt = contentType ?: if (method == "POST") "application/json; charset=utf-8" else "application/json"
+    val xtr = generateXTrSignature(method, accept, actualCt, url, body)
+    
     return mapOf(
         "user-agent" to AONEROOM_UA,
         "accept" to accept,
-        "content-type" to ct,
+        "content-type" to actualCt,
         "connection" to "keep-alive",
         "x-client-token" to xct,
         "x-tr-signature" to xtr,
@@ -120,12 +119,16 @@ private fun searchMovieBox(title: String, year: Int?, client: OkHttpClient): Str
     val jsonBody = """{"page": 1, "perPage": 10, "keyword": "${title.replace("\"", "\\\"")}"}"""
     val headers = getHeaders("POST", url, jsonBody)
 
+    println("[MovieBox] Searching for: $title (year: $year)")
     return try {
-        val body = jsonBody.toRequestBody("application/json; charset=utf-8".toMediaType())
+        val contentType = "application/json; charset=utf-8"
+        val body = jsonBody.toRequestBody(contentType.toMediaType())
         val req = Request.Builder().url(url).post(body)
         headers.forEach { (k, v) -> req.header(k, v) }
 
         val respStr = client.newCall(req.build()).execute().use { it.body?.string() ?: return null }
+
+        println("[MovieBox] Search Response: $respStr")
         val root = JSONObject(respStr)
         val data = root.optJSONObject("data") ?: return null
         val results = data.optJSONArray("results") ?: return null
@@ -142,15 +145,23 @@ private fun searchMovieBox(title: String, year: Int?, client: OkHttpClient): Str
             }
         }
 
-        if (candidates.isEmpty()) return null
+        if (candidates.isEmpty()) {
+            println("[MovieBox] No candidates found.")
+            return null
+        }
 
         // Prefer exact title match first, then fallback to first result
         val normTitle = title.trim().lowercase()
         val exactMatch = candidates.firstOrNull { (_, t) -> t.trim().lowercase() == normTitle }
-        if (exactMatch != null) return exactMatch.first
+        if (exactMatch != null) {
+            println("[MovieBox] Exact match found: ${exactMatch.second} (ID: ${exactMatch.first})")
+            return exactMatch.first
+        }
 
+        println("[MovieBox] No exact match, using first candidate: ${candidates.first().second} (ID: ${candidates.first().first})")
         return candidates.first().first
-    } catch (_: Exception) {
+    } catch (e: Exception) {
+        println("[MovieBox] Search error: ${e.message}")
         null
     }
 }
@@ -167,6 +178,7 @@ private fun fetchMovieBoxPlayInfo(
     episode: Int,
     client: OkHttpClient,
 ): List<MovieBoxStream> {
+    println("[MovieBox] Fetching play info for ID: $subjectId (S: $season, E: $episode)")
     val url = "$AONEROOM_BASE/wefeed-mobile-bff/subject-api/play-info?subjectId=$subjectId&se=$season&ep=$episode"
     val headers = getHeaders("GET", url)
 
@@ -175,6 +187,7 @@ private fun fetchMovieBoxPlayInfo(
         headers.forEach { (k, v) -> req.header(k, v) }
 
         val respStr = client.newCall(req.build()).execute().use { it.body?.string() ?: return emptyList() }
+        println("[MovieBox] Play Info Response: $respStr")
         val root = JSONObject(respStr)
         val playData = root.optJSONObject("data") ?: return emptyList()
         val streams = playData.optJSONArray("streams") ?: return emptyList()
@@ -198,10 +211,12 @@ private fun fetchMovieBoxPlayInfo(
                 else -> "hls"
             }
 
+            println("[MovieBox] Found stream: $streamUrl (Quality: $quality, Cookie: ${signCookie != null})")
             results.add(MovieBoxStream("MovieBox [$quality]", streamUrl, type, signCookie))
         }
         results
-    } catch (_: Exception) {
+    } catch (e: Exception) {
+        println("[MovieBox] Play info error: ${e.message}")
         emptyList()
     }
 }
