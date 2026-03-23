@@ -114,6 +114,8 @@ fun Application.configureRouting() {
       val season = call.request.queryParameters["season"]
       val episode = call.request.queryParameters["episode"]
       val isStreaming = call.request.queryParameters["stream"] == "true"
+      var mediaTitle = call.request.queryParameters["title"]
+      var mediaYear = call.request.queryParameters["year"]?.toIntOrNull()
       val mediaType = if (season == null) "movie" else "tv"
 
       if (tmdbId == null) {
@@ -125,22 +127,24 @@ fun Application.configureRouting() {
         return@get
       }
 
-      // TMDB lookup for title for MovieBox search
-      var mediaTitle: String? = null
-
-      try {
-        val detailUrl = "https://api.themoviedb.org/3/$mediaType/$tmdbId?api_key=$TMDB_API_KEY"
-        client.newCall(Request.Builder().url(detailUrl).build()).execute().use { resp ->
-          if (resp.isSuccessful) {
-            val json = JSONObject(resp.body?.string() ?: "{}")
-            mediaTitle =
-                    json.optString(if (mediaType == "movie") "title" else "name", null).takeIf {
-                      !it.isNullOrBlank()
-                    }
+      // TMDB lookup only if title wasn't passed from frontend
+      if (mediaTitle.isNullOrBlank()) {
+        try {
+          val detailUrl = "https://api.themoviedb.org/3/$mediaType/$tmdbId?api_key=$TMDB_API_KEY"
+          client.newCall(Request.Builder().url(detailUrl).build()).execute().use { resp ->
+            if (resp.isSuccessful) {
+              val json = JSONObject(resp.body?.string() ?: "{}")
+              mediaTitle =
+                      json.optString(if (mediaType == "movie") "title" else "name", null).takeIf {
+                        !it.isNullOrBlank()
+                      }
+              val dateStr = json.optString(if (mediaType == "movie") "release_date" else "first_air_date", "")
+              if (mediaYear == null) mediaYear = dateStr.take(4).toIntOrNull()
+            }
           }
-        }
-      } catch (e: Exception) {
+        } catch (e: Exception) {
           println("TMDB Detail Error: $e")
+        }
       }
 
       if (mediaTitle.isNullOrBlank()) {
