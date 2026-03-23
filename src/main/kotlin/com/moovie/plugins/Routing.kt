@@ -255,7 +255,7 @@ fun Application.configureRouting() {
                                         else -> if (link.url.contains(".m3u8")) "hls" else "mp4"
                                     }
                                     launch {
-                                        addStream("MovieBox [${link.name}]", link.url, st, link.quality.toString(), link.headers, "p_moviebox_aoneroom")
+                                        addStream("MovieBox [${link.name}]", link.url, st, link.quality.toString(), link.headers, "p_moviebox")
                                     }
                                 }
                             )
