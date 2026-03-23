@@ -381,6 +381,7 @@ fun Application.configureRouting() {
                                       year = year,
                                       season = season?.toIntOrNull(),
                                       episode = episode?.toIntOrNull(),
+                                      logCallback = { msg -> launch { emitLog(msg) } },
                                       subtitleCallback = { _ ->
                                       }, // We can handle subtitles if needed later
                                       callback = { link ->
