@@ -415,41 +415,16 @@ fun Application.configureRouting() {
             } else {
                 job.join()
                 val streams = JSONArray()
-                streamsList.forEach { streams.put(it) }
-
-                if (Redis.isEnabled() && streams.length() > 0) {
-                    // Cache results for 6 hours (21600 seconds)
-                    val success = Redis.set(cacheKey, streams.toString(), 21600)
-                    if (success) emitLog("Saved \${streams.length()} streams to Redis cache (6h TTL).")
+                synchronized(streamsList) {
+                    streamsList.forEach { streams.put(it) }
                 }
 
-                if (isStreaming) {
-                    // Nothing left to write, the eventChannel is closed and handled below
-                } else {
-                    call.respondText(JSONObject().apply {
-                        put("provider", "Antigravity Mega-Aggregator v4")
-                        put("status", if (streams.length() > 0) "success" else "failed")
-                        put("total", streams.length())
-                        put("stream", streams)
-                    }.toString(2), ContentType.Application.Json)
-                }
-            }
-
-            if (isStreaming) {
-                call.respondTextWriter(ContentType.Application.Json) {
-                    for (event in eventChannel!!) {
-                        write(event.toString() + "\n")
-                        flush()
-                    }
-                    
-                    // After streaming is done, save to cache
-                    val streamsToCache = JSONArray()
-                    streamsList.forEach { streamsToCache.put(it) }
-                    
-                    if (Redis.isEnabled() && streamsToCache.length() > 0) {
-                        Redis.set(cacheKey, streamsToCache.toString(), 21600)
-                    }
-                }
+                call.respondText(JSONObject().apply {
+                    put("provider", "Antigravity Mega-Aggregator v4")
+                    put("status", if (streams.length() > 0) "success" else "failed")
+                    put("total", streams.length())
+                    put("stream", streams)
+                }.toString(2), ContentType.Application.Json)
             }
         }
 
