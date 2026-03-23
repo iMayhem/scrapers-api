@@ -22,7 +22,52 @@ import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 
+import io.ktor.server.request.*
+import java.util.Base64
+
 private const val PING_TIMEOUT_MS = 3000L
+
+// ── Stream URL Token Vault ─────────────────────────────────────────────
+// Secret key material — change this to a long random string in production
+private const val TOKEN_SECRET = "m00v1e_s3cr3t_k3y_ch4ng3_th1s_1n_pr0d"
+private const val TOKEN_TTL_MS = 120_000L // 2 minutes
+
+private fun deriveKey(): SecretKeySpec {
+    val salt = "m00v1eSalt!9f2c".toByteArray()
+    val spec = PBEKeySpec(TOKEN_SECRET.toCharArray(), salt, 65536, 256)
+    val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+    return SecretKeySpec(factory.generateSecret(spec).encoded, "AES")
+}
+
+private val AES_KEY: SecretKeySpec by lazy { deriveKey() }
+
+/** Encrypts "url|headersJson|clientIp|expiresAt" into a Base64-URL-safe token */
+fun encryptToken(url: String, headersJson: String, clientIp: String): String {
+    val expiresAt = System.currentTimeMillis() + TOKEN_TTL_MS
+    // Sanitize url-like chars from headersJson to avoid split ambiguity
+    val plaintext = "$url\u0000$headersJson\u0000$clientIp\u0000$expiresAt"
+    val iv = ByteArray(12).also { java.security.SecureRandom().nextBytes(it) }
+    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+    cipher.init(Cipher.ENCRYPT_MODE, AES_KEY, GCMParameterSpec(128, iv))
+    val ciphertext = cipher.doFinal(plaintext.toByteArray(StandardCharsets.UTF_8))
+    val combined = iv + ciphertext
+    return Base64.getUrlEncoder().withoutPadding().encodeToString(combined)
+}
+
+data class TokenData(val url: String, val headersJson: String, val clientIp: String, val expiresAt: Long)
+
+/** Decrypts a token; returns TokenData or throws */
+fun decryptToken(token: String): TokenData {
+    val combined = Base64.getUrlDecoder().decode(token)
+    val iv = combined.sliceArray(0 until 12)
+    val ciphertext = combined.sliceArray(12 until combined.size)
+    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+    cipher.init(Cipher.DECRYPT_MODE, AES_KEY, GCMParameterSpec(128, iv))
+    val plaintext = String(cipher.doFinal(ciphertext), StandardCharsets.UTF_8)
+    val parts = plaintext.split("\u0000")
+    if (parts.size != 4) throw IllegalArgumentException("Invalid token format")
+    return TokenData(parts[0], parts[1], parts[2], parts[3].toLong())
+}
 
 /** Measure response latency (ms) for direct stream URLs. Returns null on failure or timeout. */
 private fun measurePing(
@@ -409,8 +454,98 @@ fun Application.configureRouting() {
         )
       }
     }
+
+    // ── Stream Token Generation ──────────────────────────────────────────
+    post("/api/token") {
+        try {
+            val body = call.receiveText()
+            val json = JSONObject(body)
+            val url = json.getString("url")
+            val headersJson = json.optString("headers", "{}")
+            // Bind token to requester's IP to prevent URL sharing
+            val clientIp = call.request.headers["X-Forwarded-For"]
+                ?: call.request.local.remoteHost
+            val token = encryptToken(url, headersJson, clientIp)
+            call.respondText(
+                JSONObject().apply { put("token", token) }.toString(),
+                ContentType.Application.Json
+            )
+        } catch (e: Exception) {
+            call.respond(HttpStatusCode.BadRequest, "Invalid request: ${e.message}")
+        }
+    }
+
+    get("/api/proxy") {
+      // Accept either a signed token OR legacy url param (for backward compat)
+      val tokenParam = call.request.queryParameters["token"]
+      val targetUrl: String
+      val headersJsonRaw: String?
+
+      if (!tokenParam.isNullOrBlank()) {
+          try {
+              val tokenData = decryptToken(tokenParam)
+              if (System.currentTimeMillis() > tokenData.expiresAt) {
+                  call.respond(HttpStatusCode.Gone, "Token expired")
+                  return@get
+              }
+              // Validate IP binding — reject if request comes from a different IP
+              val requestIp = call.request.headers["X-Forwarded-For"]
+                  ?: call.request.local.remoteHost
+              if (requestIp != tokenData.clientIp) {
+                  call.respond(HttpStatusCode.Forbidden, "Token IP mismatch")
+                  return@get
+              }
+              targetUrl = tokenData.url
+              headersJsonRaw = tokenData.headersJson
+          } catch (e: Exception) {
+              call.respond(HttpStatusCode.Unauthorized, "Invalid token")
+              return@get
+          }
+      } else {
+          // Legacy fallback (no raw URL exposure in prod)
+          targetUrl = call.request.queryParameters["url"] ?: return@get call.respond(HttpStatusCode.BadRequest, "Missing token or url")
+          headersJsonRaw = call.request.queryParameters["headers"]
+      }
+      
+      val reqBuilder = Request.Builder().url(targetUrl)
+      
+      call.request.headers["Range"]?.let { range ->
+          reqBuilder.header("Range", range)
+      }
+
+      if (!headersJsonRaw.isNullOrBlank()) {
+          try {
+              val h = JSONObject(headersJsonRaw)
+              h.keys().forEach { k -> reqBuilder.header(k, h.getString(k)) }
+          } catch(e: Exception) {
+              println("Failed parsing headers for proxy: ${e.message}")
+          }
+      }
+      
+      try {
+          val response = client.newCall(reqBuilder.build()).execute()
+          val contentType = response.header("Content-Type") ?: "video/mp4"
+          
+          if (response.code == 206 || response.code == 200) {
+              call.response.status(HttpStatusCode.fromValue(response.code))
+              call.response.header(HttpHeaders.ContentType, contentType)
+              response.header("Content-Range")?.let { call.response.header(HttpHeaders.ContentRange, it) }
+              response.header("Content-Length")?.let { call.response.header(HttpHeaders.ContentLength, it) }
+              call.response.header(HttpHeaders.AccessControlAllowOrigin, "*")
+              
+              call.respondOutputStream {
+                  response.body?.byteStream()?.copyTo(this)
+              }
+          } else {
+              call.respond(HttpStatusCode.fromValue(response.code), "Upstream Proxy Error: ${response.code}")
+          }
+      } catch (e: Exception) {
+          call.respond(HttpStatusCode.InternalServerError, "Proxy Connection Error: ${e.message}")
+      }
+    }
   }
 }
+
 
 fun cinemaOSDecryptResponse(enc: String?): String? {
   if (enc.isNullOrBlank()) return null
