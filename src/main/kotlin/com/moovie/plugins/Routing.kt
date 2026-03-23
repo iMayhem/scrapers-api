@@ -125,9 +125,8 @@ fun Application.configureRouting() {
         return@get
       }
 
-      // TMDB lookup for title/year for MovieBox search
+      // TMDB lookup for title for MovieBox search
       var mediaTitle: String? = null
-      var mediaYear: Int? = null
 
       try {
         val detailUrl = "https://api.themoviedb.org/3/$mediaType/$tmdbId?api_key=$TMDB_API_KEY"
@@ -138,8 +137,6 @@ fun Application.configureRouting() {
                     json.optString(if (mediaType == "movie") "title" else "name", null).takeIf {
                       !it.isNullOrBlank()
                     }
-            val dateStr = json.optString(if (mediaType == "movie") "release_date" else "first_air_date", "")
-            mediaYear = dateStr.take(4).toIntOrNull()
           }
         }
       } catch (e: Exception) {
