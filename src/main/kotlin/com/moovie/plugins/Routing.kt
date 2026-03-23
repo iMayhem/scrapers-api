@@ -64,8 +64,8 @@ private fun measurePing(
 fun Application.configureRouting() {
   val client =
           OkHttpClient.Builder()
-                  .connectTimeout(5, TimeUnit.SECONDS)
-                  .readTimeout(5, TimeUnit.SECONDS)
+                  .connectTimeout(20, TimeUnit.SECONDS)
+                  .readTimeout(20, TimeUnit.SECONDS)
                   .followRedirects(true)
                   .cookieJar(
                           object : CookieJar {
@@ -141,6 +141,15 @@ fun Application.configureRouting() {
         }
       } catch (e: Exception) {
           println("TMDB Detail Error: $e")
+      }
+
+      if (mediaTitle.isNullOrBlank()) {
+        call.respondText(
+          "{\"status\":\"error\",\"message\":\"TMDB lookup failed for tmdbId=$tmdbId. Check TMDB API key or network connectivity.\"}" ,
+          ContentType.Application.Json,
+          io.ktor.http.HttpStatusCode.InternalServerError
+        )
+        return@get
       }
 
       val id = tmdbId
