@@ -403,6 +403,19 @@ fun Application.configureRouting() {
                     tasks.awaitAll()
                 }
                 eventChannel?.close()
+
+                // Save to Redis Cache (Background Job - persistent even if user leaves)
+                if (Redis.isEnabled() && streamsList.isNotEmpty()) {
+                    val streamsToCache = JSONArray()
+                    synchronized(streamsList) {
+                        streamsList.forEach { streamsToCache.put(it) }
+                    }
+                    if (streamsToCache.length() > 0) {
+                        val success = Redis.set(cacheKey, streamsToCache.toString(), 21600)
+                        if (success) println("Redis: Successfully cached \${streamsToCache.length()} streams for \${id}")
+                        else println("Redis: Failed to write cache for \${id}")
+                    }
+                }
             }
 
             if (isStreaming) {
