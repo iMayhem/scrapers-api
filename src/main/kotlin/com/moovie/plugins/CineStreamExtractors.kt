@@ -6,8 +6,8 @@ import java.net.URLEncoder
 
 object CineStreamExtractors {
 
-    private fun getProxiedUrl(url: String): String {
-        val proxyBase = System.getenv("SCRAPER_PROXY")?.trim() ?: return url
+    fun getProxiedUrl(url: String): String {
+        val proxyBase = System.getenv("SCRAPER_PROXY")?.trim() ?: "https://moovie-proxy.sujeetunbeatable.workers.dev"
         val cleanBase = proxyBase.removeSuffix("/")
         val sep = if (cleanBase.contains("?")) "&" else "?"
         return "$cleanBase${sep}url=${URLEncoder.encode(url, "UTF-8")}"
@@ -241,6 +241,126 @@ object CineStreamExtractors {
                     }
                 }
             }
+        }
+    }
+
+    suspend fun invokeAllmovieland(
+        id: String? = null,
+        season: Int? = null,
+        episode: Int? = null,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val allmovielandAPI = "https://allmovieland.you"
+        println("[AML] Fetching player.js...")
+        val playerScript = try { app.get(getProxiedUrl("https://allmovieland.link/player.js?v=60%20128")).text } catch (e: Exception) {
+            println("[AML] player.js failed: ${e.message}")
+            return
+        }
+        val domainRegex = Regex("const AwsIndStreamDomain.*'(.*)';")
+        val host = domainRegex.find(playerScript)?.groupValues?.getOrNull(1) ?: run {
+            println("[AML] Could not find host in player.js. Script snippet: ${playerScript.take(200)}")
+            return
+        }
+        println("[AML] Found host: $host")
+        val referer = "$allmovielandAPI/"
+
+        val playUrl = "$host/play/$id"
+        println("[AML] Fetching play page: $playUrl")
+        val res = try {
+            val doc = app.get(playUrl, referer = referer).document
+            val script = doc.selectFirst("script:containsData(playlist)")
+            println("[AML] Script found: ${script != null}")
+            script?.data()
+                ?.substringAfter("{")
+                ?.substringBefore(";")
+                ?.substringBefore(")")
+        } catch (e: Exception) {
+            println("[AML] play page failed: ${e.message}")
+            null
+        }
+        
+        if (res == null) {
+            println("[AML] No playlist found in page.")
+            return
+        }
+        println("[AML] Playlist JSON snippet: ${res.take(150)}")
+
+        val json = try { JSONObject("{$res}") } catch (e: Exception) {
+            println("[AML] JSON parse failed: ${e.message}")
+            return
+        }
+        val key = json.optString("key")
+        val fileUri = json.optString("file")
+        println("[AML] key=$key fileUri=$fileUri")
+        if (key.isBlank() || fileUri.isBlank()) {
+            println("[AML] Missing key or fileUri.")
+            return
+        }
+        
+        val headers = mapOf("X-CSRF-TOKEN" to key, "Referer" to referer)
+
+        val serverRes = try {
+            val fileUrl = if (fileUri.startsWith("http")) fileUri else if (fileUri.startsWith("/")) "$host$fileUri" else "$host/$fileUri"
+            app.get(fileUrl, headers = headers, referer = referer)
+                .text
+                .replace(Regex(""",\s*\[]"""), "")
+        } catch (e: Exception) { return }
+
+        val arr = try { JSONArray(serverRes) } catch (e: Exception) { return }
+        val servers = mutableListOf<Pair<String, String>>()
+
+        if (season == null) {
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                val file = obj.optString("file")
+                val title = obj.optString("title")
+                if (file.isNotEmpty() && title.isNotEmpty()) servers.add(Pair(file, title))
+            }
+        } else {
+            for (i in 0 until arr.length()) {
+                val sObj = arr.optJSONObject(i) ?: continue
+                if (sObj.optString("id") == season.toString()) {
+                    val eps = sObj.optJSONArray("folder") ?: continue
+                    for (j in 0 until eps.length()) {
+                        val eObj = eps.optJSONObject(j) ?: continue
+                        if (eObj.optString("episode") == episode.toString()) {
+                            val streams = eObj.optJSONArray("folder") ?: continue
+                            for (k in 0 until streams.length()) {
+                                val strObj = streams.optJSONObject(k) ?: continue
+                                val file = strObj.optString("file")
+                                val title = strObj.optString("title")
+                                if (file.isNotEmpty() && title.isNotEmpty()) servers.add(Pair(file, title))
+                            }
+                            break
+                        }
+                    }
+                    break
+                }
+            }
+        }
+
+        servers.safeAmap { (server, lang) ->
+            val path = try {
+                app.post(
+                    "${host}/playlist/${server}.txt",
+                    headers = headers,
+                    referer = referer
+                ).text
+            } catch (e: Exception) { return@safeAmap null }
+
+            if (path.isNotBlank()) {
+                callback.invoke(
+                    newExtractorLink(
+                        source = "AllMoviesLand ($lang)",
+                        name = "Allmoviesland ($lang)",
+                        url = path,
+                        type = ExtractorLinkType.M3U8,
+                        quality = Qualities.P1080.value,
+                        referer = referer
+                    )
+                )
+            }
+            null
         }
     }
 
