@@ -159,7 +159,15 @@ object CineStreamExtractors {
                             val url = c.optString("url")
                             val q = c.optInt("quality", 0)
                             if (url.isNotEmpty()) {
-                                callback(ExtractorLink("MovieBox ($language)", "MovieBox", url, "", q, ExtractorLinkType.MP4))
+                                callback(
+                                    newExtractorLink(
+                                        source = "MovieBox ($language)",
+                                        name = "MovieBox",
+                                        url = url,
+                                        quality = q,
+                                        type = ExtractorLinkType.VIDEO
+                                    )
+                                )
                             }
                         }
                     } else {
