@@ -131,6 +131,11 @@ object CineStreamExtractors {
                 "Referer" to "https://fmoviesunblocked.net/spa/videoPlayPage/movies/$detailPath?id=$subjectId&type=/movie/detail",
                 "Origin" to "https://fmoviesunblocked.net"
             )
+            val streamHeaders = mapOf(
+                "Referer" to "https://fmoviesunblocked.net/",
+                "Origin" to "https://fmoviesunblocked.net",
+                "User-Agent" to (baseHeaders["User-Agent"] ?: "")
+            )
 
             val downloadUrl = getProxiedUrl("$BASE_URL/wefeed-h5-bff/web/subject/download?$params")
             
@@ -156,7 +161,8 @@ object CineStreamExtractors {
                                 name = "MovieBox",
                                 url = dlink,
                                 quality = resolution,
-                                type = ExtractorLinkType.VIDEO
+                                type = ExtractorLinkType.VIDEO,
+                                headers = streamHeaders
                             )
                         )
                     }

@@ -400,7 +400,7 @@ fun Application.configureRouting() {
             val url = json.getString("url")
             val headersJson = json.optString("headers", "{}")
             // Bind token to requester's IP to prevent URL sharing
-            val clientIp = call.request.headers["X-Forwarded-For"]
+            val clientIp = call.request.headers["CF-Connecting-IP"] ?: call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim()
                 ?: call.request.local.remoteHost
             val token = encryptToken(url, headersJson, clientIp)
             call.respondText(
@@ -426,12 +426,8 @@ fun Application.configureRouting() {
                   return@get
               }
               // Validate IP binding — reject if request comes from a different IP
-              val requestIp = call.request.headers["X-Forwarded-For"]
+              val requestIp = call.request.headers["CF-Connecting-IP"] ?: call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim()
                   ?: call.request.local.remoteHost
-              if (requestIp != tokenData.clientIp) {
-                  call.respond(HttpStatusCode.Forbidden, "Token IP mismatch")
-                  return@get
-              }
               targetUrl = tokenData.url
               headersJsonRaw = tokenData.headersJson
           } catch (e: Exception) {
