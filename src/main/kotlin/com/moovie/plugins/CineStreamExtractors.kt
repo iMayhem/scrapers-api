@@ -86,9 +86,18 @@ object CineStreamExtractors {
 
 
         // 3. Match Matching
-        val escapedTitle = Regex.escape(title ?: "")
+        val normalizedTitle = (title ?: "").trim()
+        val requestedYear = year?.take(4)?.toIntOrNull()
+        val escapedTitle = Regex.escape(normalizedTitle)
         val titleMatchRegex = """^$escapedTitle(?:\s*[\(\[]\d{4}[\)\]])?(?:\s*\[([^\]]+)\])?$""".toRegex(RegexOption.IGNORE_CASE)
-        val matches = mutableListOf<Pair<String, String>>() // ID, Language
+        data class MatchCandidate(
+            val id: String,
+            val language: String,
+            val titleScore: Int,
+            val totalScore: Int,
+            val releaseYear: Int?
+        )
+        val matches = mutableListOf<MatchCandidate>()
 
         for (i in 0 until items.length()) {
             val item = items.optJSONObject(i) ?: continue
@@ -97,11 +106,36 @@ object CineStreamExtractors {
             val cleanTitle = rawTitle.replace(SEASON_SUFFIX_REGEX, "").trim()
             
 
+            val releaseYear = item.optString("releaseDate")
+                .takeIf { it.length >= 4 }
+                ?.substring(0, 4)
+                ?.toIntOrNull()
+
             val matchResult = titleMatchRegex.find(cleanTitle)
-            if (matchResult != null || cleanTitle.equals(title, ignoreCase = true) || cleanTitle.contains(title ?: "", ignoreCase = true)) {
+            val titleScore = when {
+                matchResult != null || cleanTitle.equals(normalizedTitle, ignoreCase = true) -> 300
+                cleanTitle.startsWith(normalizedTitle, ignoreCase = true) -> 200
+                cleanTitle.contains(normalizedTitle, ignoreCase = true) -> 100
+                else -> 0
+            }
+            if (titleScore > 0) {
+                val yearScore = when {
+                    requestedYear == null -> 0
+                    releaseYear == null -> -25
+                    releaseYear == requestedYear -> 1000
+                    kotlin.math.abs(releaseYear - requestedYear) == 1 -> 100
+                    else -> -500
+                }
                 val lang = matchResult?.groups?.get(1)?.value ?: "Original"
-                matches.add(id to lang)
-            } else {
+                matches.add(
+                    MatchCandidate(
+                        id = id,
+                        language = lang,
+                        titleScore = titleScore,
+                        totalScore = titleScore + yearScore,
+                        releaseYear = releaseYear
+                    )
+                )
             }
         }
 
@@ -109,8 +143,29 @@ object CineStreamExtractors {
             return
         }
 
+        val selectedMatches = matches
+            .let { candidates ->
+                val exactTitleExactYear = candidates.filter {
+                    requestedYear != null &&
+                        it.releaseYear == requestedYear &&
+                        it.titleScore >= 300
+                }
+                when {
+                    exactTitleExactYear.isNotEmpty() -> exactTitleExactYear
+                    requestedYear != null -> {
+                        val exactYear = candidates.filter { it.releaseYear == requestedYear }
+                        if (exactYear.isNotEmpty()) exactYear else candidates
+                    }
+                    else -> candidates
+                }
+            }
+            .sortedByDescending { it.totalScore }
+            .distinctBy { it.id }
+
         // 4. Detail & Link Extraction
-        matches.forEach { (subjectId, language) ->
+        selectedMatches.forEach { candidate ->
+            val subjectId = candidate.id
+            val language = candidate.language
             val detailResponse = try {
                 val detailUrl = getProxiedUrl("$BASE_URL/wefeed-h5-bff/web/subject/detail?subjectId=$subjectId")
                 app.get(detailUrl, headers = baseHeaders).text
