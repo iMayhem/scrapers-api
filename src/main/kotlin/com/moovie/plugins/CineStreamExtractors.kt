@@ -72,7 +72,8 @@ object CineStreamExtractors {
         }
 
         val searchObj = try { JSONObject(searchResponse) } catch (e: Exception) { 
-            logCallback("MovieBox Error: Failed to parse search JSON.")
+            val preview = searchResponse.take(150).replace("\n", " ")
+            logCallback("MovieBox Error: Failed to parse search JSON. Raw start: $preview")
             return 
         }
         val items = unwrapData(searchObj).optJSONArray("items") ?: run {
