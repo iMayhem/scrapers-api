@@ -245,7 +245,7 @@ fun Application.configureRouting() {
           try {
               val tmdbApiKey = "f02a0c39f2e7a175fec9f673ff440c4e"
               val mediaType = if (season != null) "tv" else "movie"
-              val extUrl = CineStreamExtractors.getProxiedUrl("https://api.themoviedb.org/3/$mediaType/$tmdbId/external_ids?api_key=$tmdbApiKey")
+              val extUrl = "https://api.themoviedb.org/3/$mediaType/$tmdbId/external_ids?api_key=$tmdbApiKey"
               val metaRes = app.get(extUrl).text
               val metaJson = JSONObject(metaRes)
               imdbId = metaJson.optString("imdb_id").takeIf { it.isNotBlank() }
