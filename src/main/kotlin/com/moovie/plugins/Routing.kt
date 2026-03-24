@@ -240,6 +240,21 @@ fun Application.configureRouting() {
 
       val id = tmdbId ?: mediaTitle // Use tmdbId as id if available, otherwise title
 
+      var imdbId = call.request.queryParameters["imdbId"]
+      if (imdbId.isNullOrBlank() && tmdbId != null) {
+          try {
+              val tmdbApiKey = "f02a0c39f2e7a175fec9f673ff440c4e"
+              val mediaType = if (season != null) "tv" else "movie"
+              val extUrl = CineStreamExtractors.getProxiedUrl("https://api.themoviedb.org/3/$mediaType/$tmdbId/external_ids?api_key=$tmdbApiKey")
+              val metaRes = app.get(extUrl).text
+              val metaJson = JSONObject(metaRes)
+              imdbId = metaJson.optString("imdb_id").takeIf { it.isNotBlank() }
+              println("Resolved IMDb ID from TMDB: $imdbId")
+          } catch (e: Exception) {
+              println("Failed to resolve IMDb ID: ${e.message}")
+          }
+      }
+
       val streamsList = Collections.synchronizedList(mutableListOf<JSONObject>())
       val eventChannel =
               if (isStreaming)
@@ -356,6 +371,34 @@ fun Application.configureRouting() {
                               )
                             } catch (e: Exception) {
                             }
+                          }
+                  )
+
+                  tasks.add(
+                          async {
+                              try {
+                                  if (!imdbId.isNullOrBlank()) {
+                                      CineStreamExtractors.invokeAllmovieland(
+                                              id = imdbId,
+                                              season = season?.toIntOrNull(),
+                                              episode = episode?.toIntOrNull(),
+                                              callback = { link ->
+                                                  val st = if (link.isM3u8 || link.url.contains(".m3u8")) "hls" else "mp4"
+                                                  launch {
+                                                      addStream(
+                                                              link.name.ifBlank { "AllMoviesLand" },
+                                                              link.url,
+                                                              st,
+                                                              link.quality.toString(),
+                                                              link.headers,
+                                                              "p_allmovieland"
+                                                      )
+                                                  }
+                                              }
+                                      )
+                                  }
+                              } catch (e: Exception) {
+                              }
                           }
                   )
 

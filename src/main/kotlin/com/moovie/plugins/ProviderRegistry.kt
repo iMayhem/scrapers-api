@@ -39,6 +39,11 @@ object ProviderRegistry {
             key = "p_moviebox", displayName = "Moviebox",
             executeStandard = { res, subCb, cb -> CineStreamExtractors.invokeMoviebox(title = res.title, season = res.season, episode = res.episode, subtitleCallback = subCb, callback = cb) },
             executeAnime = { res, subCb, cb -> CineStreamExtractors.invokeMoviebox(title = res.title, season = res.season, episode = res.episode, subtitleCallback = subCb, callback = cb) }
+        ),
+        ProviderDef(
+            key = "p_allmovieland", displayName = "AllMoviesLand",
+            executeStandard = { res, _, cb -> CineStreamExtractors.invokeAllmovieland(id = res.title, season = res.season, episode = res.episode, callback = cb) },
+            executeAnime = { res, _, cb -> CineStreamExtractors.invokeAllmovieland(id = res.title, season = res.season, episode = res.episode, callback = cb) }
         )
     )
 
