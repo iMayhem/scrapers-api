@@ -61,7 +61,7 @@ object CineStreamExtractors {
         val searchKeyword = title ?: ""
 
         val searchResponse = try {
-            val searchUrl = getProxiedUrl("$BASE_URL/wefeed-h5-bff/web/subject/search")
+            val searchUrl = "$BASE_URL/wefeed-h5-bff/web/subject/search"
             app.post(
                 searchUrl,
                 headers = baseHeaders,
@@ -167,7 +167,7 @@ object CineStreamExtractors {
             val subjectId = candidate.id
             val language = candidate.language
             val detailResponse = try {
-                val detailUrl = getProxiedUrl("$BASE_URL/wefeed-h5-bff/web/subject/detail?subjectId=$subjectId")
+                val detailUrl = "$BASE_URL/wefeed-h5-bff/web/subject/detail?subjectId=$subjectId"
                 app.get(detailUrl, headers = baseHeaders).text
             } catch (e: Exception) {
                 null
@@ -192,7 +192,7 @@ object CineStreamExtractors {
                 "User-Agent" to (baseHeaders["User-Agent"] ?: "")
             )
 
-            val downloadUrl = getProxiedUrl("$BASE_URL/wefeed-h5-bff/web/subject/download?$params")
+            val downloadUrl = "$BASE_URL/wefeed-h5-bff/web/subject/download?$params"
             
             val downloadResponseString = try {
                 app.get(downloadUrl, headers = downloadHeaders).text
