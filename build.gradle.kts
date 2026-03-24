@@ -25,7 +25,6 @@ dependencies {
     implementation("org.json:json:20240303")
     implementation("com.google.code.gson:gson:2.11.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
-    implementation("redis.clients:jedis:5.1.2")
 }
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {

@@ -51,8 +51,8 @@ object CineStreamExtractors {
 
         // 2. Search
         val subjectType = if (season != null) 2 else 1
-        val searchKeyword = if (year != null && year.length == 4) "$title $year" else title
-        logCallback("MovieBox: Performing search for '$searchKeyword'...")
+        val searchKeyword = title ?: ""
+        logCallback("MovieBox: Performing search for '$searchKeyword' (matching year $year)...")
 
         val searchResponse = try {
             val searchUrl = getProxiedUrl("$BASE_URL/wefeed-h5-bff/web/subject/search")
@@ -93,13 +93,15 @@ object CineStreamExtractors {
             val rawTitle = item.optString("title", "")
             val cleanTitle = rawTitle.replace(SEASON_SUFFIX_REGEX, "").trim()
             
+            logCallback("MovieBox Candidate: '$rawTitle' (ID: $id)")
+
             val matchResult = titleMatchRegex.find(cleanTitle)
-            if (matchResult != null || cleanTitle.equals(title, ignoreCase = true)) {
+            if (matchResult != null || cleanTitle.equals(title, ignoreCase = true) || cleanTitle.contains(title ?: "", ignoreCase = true)) {
                 val lang = matchResult?.groups?.get(1)?.value ?: "Original"
-                logCallback("MovieBox Match: '$rawTitle' -> $lang ($id)")
+                logCallback("MovieBox MATCH: '$rawTitle' -> $lang")
                 matches.add(id to lang)
             } else {
-                logCallback("MovieBox Skip: '$rawTitle' (Title mismatch)")
+                logCallback("MovieBox SKIP: Title mismatch")
             }
         }
 

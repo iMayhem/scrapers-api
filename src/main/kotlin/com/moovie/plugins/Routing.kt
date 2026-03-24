@@ -264,55 +264,7 @@ fun Application.configureRouting() {
         return null
       }
 
-      // Cache key: always use tmdbId/title for consistency. Add season/episode for TV series.
-      val cacheKey =
-              if (season == null) {
-                "scrape:movie:$id"
-              } else {
-                "scrape:tv:$id:s${season}:e${episode}"
-              }
-      var cachedData: JSONArray? = null
-
-      if (Redis.isEnabled()) {
-        val cachedString = Redis.get(cacheKey)
-        if (!cachedString.isNullOrBlank()) {
-          try {
-            cachedData = JSONArray(cachedString)
-          } catch (e: Exception) {
-            emitLog("Warning: Failed to parse cached data")
-          }
-        }
-      }
-
-      if (cachedData != null && cachedData.length() > 0) {
-        println("Redis: Cache hit for $tmdbId! Serving ${cachedData.length()} streams.")
-        emitLog("Cache hit! Serving ${cachedData.length()} streams from Redis.")
-        if (isStreaming) {
-          call.respondTextWriter(ContentType.Application.Json) {
-            for (i in 0 until cachedData.length()) {
-              val streamObj = cachedData.getJSONObject(i)
-              // Re-emit each stream event
-              write(streamObj.apply { put("msgType", "stream") }.toString() + "\n")
-              flush()
-              delay(10) // Small delay to ensure client can process
-            }
-          }
-        } else {
-          call.respondText(
-                  JSONObject()
-                          .apply {
-                            put("provider", "Antigravity Mega-Aggregator v4")
-                            put("status", "success")
-                            put("total", cachedData.length())
-                            put("stream", cachedData)
-                            put("cached", true)
-                          }
-                          .toString(2),
-                  ContentType.Application.Json
-          )
-        }
-        return@get
-      }
+      // Redis caching removed
 
       fun createStreamObj(
               server: String,
@@ -415,19 +367,7 @@ fun Application.configureRouting() {
                 }
                 eventChannel?.close()
 
-                // Save to Redis Cache (Background Job - persistent even if user leaves)
-                if (Redis.isEnabled() && streamsList.isNotEmpty()) {
-                  val streamsToCache = JSONArray()
-                  synchronized(streamsList) { streamsList.forEach { streamsToCache.put(it) } }
-                  if (streamsToCache.length() > 0) {
-                    val success = Redis.set(cacheKey, streamsToCache.toString(), 21600)
-                    if (success)
-                            println(
-                                    "Redis: Successfully cached ${streamsToCache.length()} streams for $id"
-                            )
-                    else println("Redis: Failed to write cache for $id")
-                  }
-                }
+                // Redis caching removed
               }
 
       if (isStreaming) {
