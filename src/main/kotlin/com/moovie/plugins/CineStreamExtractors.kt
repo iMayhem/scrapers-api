@@ -7,10 +7,14 @@ import java.net.URLEncoder
 object CineStreamExtractors {
 
     private fun getProxiedUrl(url: String): String {
-        val proxyBase = System.getenv("SCRAPER_PROXY") ?: return url
-        val sep = if (proxyBase.contains("?")) "&" else "?"
-        return "$proxyBase${sep}url=${URLEncoder.encode(url, "UTF-8")}"
+        val proxyBase = System.getenv("SCRAPER_PROXY")?.trim() ?: return url
+        val cleanBase = proxyBase.removeSuffix("/")
+        val sep = if (cleanBase.contains("?")) "&" else "?"
+        return "$cleanBase${sep}url=${URLEncoder.encode(url, "UTF-8")}"
     }
+
+    private fun getProxyBase(): String? = System.getenv("SCRAPER_PROXY")
+
 
     private fun unwrapData(json: JSONObject): JSONObject {
         val data = json.optJSONObject("data") ?: return json
@@ -32,14 +36,20 @@ object CineStreamExtractors {
 
         val baseHeaders = mapOf(
             "X-Client-Info" to "{\"timezone\":\"Africa/Nairobi\"}",
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             "Accept-Language" to "en-US,en;q=0.5",
             "Accept" to "application/json",
-            "Referer" to BASE_URL,
-            "Host" to HOST,
-            "Connection" to "keep-alive"
+            "Referer" to "$BASE_URL/",
+            "Origin" to BASE_URL,
+            "Connection" to "keep-alive",
+            "X-Forwarded-For" to "122.161.49.200"
         )
 
+
+
+        logCallback("MovieBox: Using Proxy Base: ${getProxyBase() ?: "NONE"}")
         logCallback("MovieBox: Initializing with Title='$title', Year='$year', S=$season, E=$episode")
+
         
         // 1. App Init (Optional but mimics client)
         try {
@@ -124,63 +134,70 @@ object CineStreamExtractors {
 
             val detailObj = if (detailResponse != null) try { JSONObject(detailResponse) } catch (e: Exception) { null } else null
             val subjectData = unwrapData(detailObj ?: JSONObject()).optJSONObject("subject")
-            val episodes = subjectData?.optJSONArray("episodes")
+            val detailPath = subjectData?.optString("detailPath") ?: ""
+            
+            val params = StringBuilder("subjectId=$subjectId")
+            if (season != null) {
+                params.append("&se=$season&ep=$episode")
+            }
 
-            if (episodes != null && episodes.length() > 0) {
-                logCallback("MovieBox: Processing ${episodes.length()} episodes...")
-                
-                val targetEpisode = if (season != null && episode != null) {
-                    var found: JSONObject? = null
-                    for (i in 0 until episodes.length()) {
-                        val ep = episodes.getJSONObject(i)
-                        if (ep.optInt("season") == season && ep.optInt("episode") == episode) {
-                            found = ep
-                            break
-                        }
-                    }
-                    found
-                } else episodes.getJSONObject(0)
+            val downloadHeaders = baseHeaders + mapOf(
+                "Referer" to "https://fmoviesunblocked.net/spa/videoPlayPage/movies/$detailPath?id=$subjectId&type=/movie/detail",
+                "Origin" to "https://fmoviesunblocked.net"
+            )
 
-                if (targetEpisode != null) {
-                    val epId = targetEpisode.optString("id")
-                    logCallback("MovieBox: Extracting stream for Episode ID $epId...")
-                    
-                    val playUrl = getProxiedUrl("$BASE_URL/wefeed-h5-bff/web/subject/play-info?id=$epId")
-                    val playResponse = try {
-                        app.get(playUrl, headers = baseHeaders).text
-                    } catch (e: Exception) {
-                        logCallback("MovieBox Error: Play info failed for $epId")
-                        null
-                    }
+            logCallback("MovieBox: Exacting stream from download endpoint...")
+            val downloadUrl = getProxiedUrl("$BASE_URL/wefeed-h5-bff/web/subject/download?$params")
+            
+            val downloadResponseString = try {
+                app.get(downloadUrl, headers = downloadHeaders).text
+            } catch (e: Exception) {
+                logCallback("MovieBox Error: Download fetch failed for $subjectId")
+                null
+            }
 
-                    val playData = unwrapData(if (playResponse != null) try { JSONObject(playResponse) } catch (e: Exception) { JSONObject() } else JSONObject())
-                    val contents = playData.optJSONArray("contents")
-                    if (contents != null && contents.length() > 0) {
-                        logCallback("MovieBox: Found ${contents.length()} quality variants.")
-                        for (i in 0 until contents.length()) {
-                            val c = contents.getJSONObject(i)
-                            val url = c.optString("url")
-                            val q = c.optInt("quality", 0)
-                            if (url.isNotEmpty()) {
-                                callback(
-                                    newExtractorLink(
-                                        source = "MovieBox ($language)",
-                                        name = "MovieBox",
-                                        url = url,
-                                        quality = q,
-                                        type = ExtractorLinkType.VIDEO
-                                    )
-                                )
-                            }
-                        }
-                    } else {
-                        logCallback("MovieBox: No streams found in play-info for this episode.")
+            val sourceObj = try { JSONObject(downloadResponseString ?: "{}") } catch (e: Exception) { JSONObject() }
+            val sourceData = unwrapData(sourceObj)
+
+            val downloads = sourceData.optJSONArray("downloads")
+            if (downloads != null && downloads.length() > 0) {
+                logCallback("MovieBox: Found ${downloads.length()} download links!")
+                for (i in 0 until downloads.length()) {
+                    val d = downloads.optJSONObject(i) ?: continue
+                    val dlink = d.optString("url")
+                    if (dlink.isNotEmpty()) {
+                        val resolution = d.optInt("resolution")
+                        callback(
+                            newExtractorLink(
+                                source = "MovieBox ($language)",
+                                name = "MovieBox",
+                                url = dlink,
+                                quality = resolution,
+                                type = ExtractorLinkType.VIDEO
+                            )
+                        )
                     }
-                } else {
-                    logCallback("MovieBox: Requested S${season}E${episode} not found in episode list.")
                 }
             } else {
-                logCallback("MovieBox: No episodes found for this subject.")
+                logCallback("MovieBox: No streams found in download endpoint.")
+            }
+
+            val subtitlesList = sourceData.optJSONArray("captions")
+            if (subtitlesList != null && subtitlesList.length() > 0) {
+                logCallback("MovieBox: Found ${subtitlesList.length()} subtitle tracks.")
+                for (i in 0 until subtitlesList.length()) {
+                    val s = subtitlesList.optJSONObject(i) ?: continue
+                    val slink = s.optString("url")
+                    if (slink.isNotEmpty()) {
+                        val lan = s.optString("lan")
+                        subtitleCallback(
+                            newSubtitleFile(
+                                getLanguage(lan) ?: lan,
+                                slink
+                            )
+                        )
+                    }
+                }
             }
         }
     }
@@ -193,17 +210,20 @@ object CineStreamExtractors {
         val BASE_URL = "https://$HOST"
         val baseHeaders = mapOf(
             "X-Client-Info" to "{\"timezone\":\"Africa/Nairobi\"}",
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             "Accept-Language" to "en-US,en;q=0.5",
             "Accept" to "application/json",
-            "Referer" to BASE_URL,
-            "Host" to HOST,
+            "Referer" to "$BASE_URL/",
+            "Origin" to BASE_URL,
             "Connection" to "keep-alive"
         )
 
+
         val subjectType = if (isTv) 2 else 1
         val searchResponseString = try {
+            val searchUrl = getProxiedUrl("$BASE_URL/wefeed-h5-bff/web/subject/search")
             app.post(
-                "$BASE_URL/wefeed-h5-bff/web/subject/search",
+                searchUrl,
                 headers = baseHeaders,
                 json = mapOf(
                     "keyword" to query,
