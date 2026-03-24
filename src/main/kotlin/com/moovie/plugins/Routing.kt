@@ -254,7 +254,6 @@ fun Application.configureRouting() {
         }
       }
 
-      suspend fun emitLog(msg: String) = emit("log", JSONObject().put("message", msg))
 
       fun parseFileSizeGb(server: String): Double? {
         val gbMatch = Regex("""(\d+\.?\d*)\s*GB""", RegexOption.IGNORE_CASE).find(server)
@@ -325,7 +324,6 @@ fun Application.configureRouting() {
                   // MovieBox (Only active server)
                   tasks.add(
                           async {
-                            emitLog("Checking MovieBox...")
                             try {
                               // Using the updated MovieBox from CineStreamExtractors
                               CineStreamExtractors.invokeMoviebox(
@@ -333,7 +331,6 @@ fun Application.configureRouting() {
                                       year = year,
                                       season = season?.toIntOrNull(),
                                       episode = episode?.toIntOrNull(),
-                                      logCallback = { msg -> launch { emitLog(msg) } },
                                       subtitleCallback = { _ ->
                                       }, // We can handle subtitles if needed later
                                       callback = { link ->
@@ -358,7 +355,6 @@ fun Application.configureRouting() {
                                       }
                               )
                             } catch (e: Exception) {
-                              emitLog("MovieBox error: ${e.message}")
                             }
                           }
                   )
