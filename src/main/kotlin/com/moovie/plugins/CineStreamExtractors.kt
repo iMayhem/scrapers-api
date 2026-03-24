@@ -213,7 +213,7 @@ object CineStreamExtractors {
                         callback(
                             newExtractorLink(
                                 source = "MovieBox ($language)",
-                                name = "MovieBox",
+                                name = if (language == "Original") "MovieBox" else language,
                                 url = dlink,
                                 quality = resolution,
                                 type = ExtractorLinkType.VIDEO,
