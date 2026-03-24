@@ -182,8 +182,175 @@ object CineStreamExtractors {
         }
     }
 
-    // --- Legacy Helpers (Stubbed or Minimal) ---
-    suspend fun getCinemetaDetails(type: String, id: String): JSONObject? = null
-    suspend fun getKitsuDetails(id: String): JSONObject? = null
-    suspend fun getMovieboxDetail(subjectId: String): JSONObject? = null
+    suspend fun searchMoviebox(
+        query: String,
+        isTv: Boolean = false
+    ): List<JSONObject> {
+        val HOST = "h5.aoneroom.com"
+        val BASE_URL = "https://$HOST"
+        val baseHeaders = mapOf(
+            "X-Client-Info" to "{\"timezone\":\"Africa/Nairobi\"}",
+            "Accept-Language" to "en-US,en;q=0.5",
+            "Accept" to "application/json",
+            "Referer" to BASE_URL,
+            "Host" to HOST,
+            "Connection" to "keep-alive"
+        )
+
+        val subjectType = if (isTv) 2 else 1
+        val searchResponseString = try {
+            app.post(
+                "$BASE_URL/wefeed-h5-bff/web/subject/search",
+                headers = baseHeaders,
+                json = mapOf(
+                    "keyword" to query,
+                    "page" to 1,
+                    "perPage" to 24,
+                    "subjectType" to subjectType
+                )
+            ).text
+        } catch (e: Exception) {
+            return emptyList()
+        }
+
+        val searchObj = try { JSONObject(searchResponseString) } catch (e: Exception) { 
+            return emptyList()
+        }
+
+        fun unwrapData(json: JSONObject): JSONObject {
+            val data = json.optJSONObject("data") ?: return json
+            return data.optJSONObject("data") ?: data
+        }
+
+        val items = unwrapData(searchObj).optJSONArray("items") ?: return emptyList()
+        val results = mutableListOf<JSONObject>()
+        for (i in 0 until items.length()) {
+            items.optJSONObject(i)?.let { results.add(it) }
+        }
+        return results
+    }
+
+    suspend fun getCinemetaHome(type: String = "movie", catalogId: String = "top"): List<JSONObject> {
+        val baseUrl = "https://v3-cinemeta.strem.io"
+        val url = "$baseUrl/catalog/$type/$catalogId.json"
+        val responseString = try { app.get(url).text } catch (e: Exception) { return emptyList() }
+        val obj = try { JSONObject(responseString) } catch (e: Exception) { return emptyList() }
+        val metas = obj.optJSONArray("metas") ?: return emptyList()
+        val results = mutableListOf<JSONObject>()
+        for (i in 0 until metas.length()) { metas.optJSONObject(i)?.let { results.add(it) } }
+        return results
+    }
+
+    suspend fun getKitsuHome(): List<JSONObject> {
+        val baseUrl = "https://anime-kitsu.strem.fun"
+        val url = "$baseUrl/catalog/anime/kitsu-anime-trending.json"
+        val responseString = try { app.get(url).text } catch (e: Exception) { return emptyList() }
+        val obj = try { JSONObject(responseString) } catch (e: Exception) { return emptyList() }
+        val metas = obj.optJSONArray("metas") ?: return emptyList()
+        val results = mutableListOf<JSONObject>()
+        for (i in 0 until metas.length()) { metas.optJSONObject(i)?.let { results.add(it) } }
+        return results
+    }
+
+    suspend fun getKitsuDetails(id: String): JSONObject? {
+        val baseUrl = "https://anime-kitsu.strem.fun"
+        val url = "$baseUrl/meta/anime/$id.json"
+        val responseString = try { app.get(url).text } catch (e: Exception) { return null }
+        val obj = try { JSONObject(responseString) } catch (e: Exception) { return null }
+        return obj.optJSONObject("meta")
+    }
+
+    suspend fun searchKitsu(query: String): List<JSONObject> {
+        val baseUrl = "https://anime-kitsu.strem.fun"
+        val url = "$baseUrl/catalog/anime/kitsu-anime-trending/search=${URLEncoder.encode(query, "UTF-8")}.json"
+        val responseString = try { app.get(url).text } catch (e: Exception) { return emptyList() }
+        val obj = try { JSONObject(responseString) } catch (e: Exception) { return emptyList() }
+        val metas = obj.optJSONArray("metas") ?: return emptyList()
+        val results = mutableListOf<JSONObject>()
+        for (i in 0 until metas.length()) { metas.optJSONObject(i)?.let { results.add(it) } }
+        return results
+    }
+
+    suspend fun searchCinemeta(query: String, type: String = "movie"): List<JSONObject> {
+        val baseUrl = "https://v3-cinemeta.strem.io"
+        val url = "$baseUrl/catalog/$type/search/search=${URLEncoder.encode(query, "UTF-8")}.json"
+        val responseString = try { app.get(url).text } catch (e: Exception) { return emptyList() }
+        val obj = try { JSONObject(responseString) } catch (e: Exception) { return emptyList() }
+        val metas = obj.optJSONArray("metas") ?: return emptyList()
+        val results = mutableListOf<JSONObject>()
+        for (i in 0 until metas.length()) { metas.optJSONObject(i)?.let { results.add(it) } }
+        return results
+    }
+
+    suspend fun getCinemetaDetails(type: String, id: String): JSONObject? {
+        val baseUrl = "https://v3-cinemeta.strem.io"
+        val url = "$baseUrl/meta/$type/$id.json"
+        val responseString = try { app.get(url).text } catch (e: Exception) { return null }
+        val obj = try { JSONObject(responseString) } catch (e: Exception) { return null }
+        return obj.optJSONObject("meta")
+    }
+
+    suspend fun getMovieboxHome(): List<JSONObject> {
+        val HOST = "h5.aoneroom.com"
+        val BASE_URL = "https://$HOST"
+        val baseHeaders = mapOf(
+            "X-Client-Info" to "{\"timezone\":\"Africa/Nairobi\"}",
+            "Accept-Language" to "en-US,en;q=0.5",
+            "Accept" to "application/json",
+            "Referer" to BASE_URL,
+            "Host" to HOST,
+            "Connection" to "keep-alive"
+        )
+
+        val homeUrl = "$BASE_URL/wefeed-h5-bff/web/home/get-home-data?page=1&perPage=24"
+        val responseString = try {
+            app.get(homeUrl, headers = baseHeaders).text
+        } catch (e: Exception) {
+            return emptyList()
+        }
+
+        val homeObj = try { JSONObject(responseString) } catch (e: Exception) { return emptyList() }
+        
+        fun unwrapData(json: JSONObject): JSONObject {
+            val data = json.optJSONObject("data") ?: return json
+            return data.optJSONObject("data") ?: data
+        }
+        
+        val items = unwrapData(homeObj).optJSONArray("items") ?: return emptyList()
+        val results = mutableListOf<JSONObject>()
+        for (i in 0 until items.length()) {
+            items.optJSONObject(i)?.let { results.add(it) }
+        }
+        return results
+    }
+
+    suspend fun getMovieboxDetail(subjectId: String): JSONObject? {
+        val HOST = "h5.aoneroom.com"
+        val BASE_URL = "https://$HOST"
+        val baseHeaders = mapOf(
+            "X-Client-Info" to "{\"timezone\":\"Africa/Nairobi\"}",
+            "Accept-Language" to "en-US,en;q=0.5",
+            "Accept" to "application/json",
+            "Referer" to BASE_URL,
+            "Host" to HOST,
+            "Connection" to "keep-alive"
+        )
+
+        val detailUrl = "$BASE_URL/wefeed-h5-bff/web/subject/detail?subjectId=${subjectId}"
+        val detailResponseString = try {
+            app.get(detailUrl, headers = baseHeaders).text
+        } catch (e: Exception) {
+            return null
+        }
+
+        val detailObj = try { JSONObject(detailResponseString) } catch (e: Exception) { return null }
+        
+        fun unwrapData(json: JSONObject): JSONObject {
+            val data = json.optJSONObject("data") ?: return json
+            return data.optJSONObject("data") ?: data
+        }
+        
+        return unwrapData(detailObj).optJSONObject("subject")
+    }
+
 }
