@@ -47,8 +47,6 @@ object CineStreamExtractors {
 
 
 
-        logCallback("MovieBox: Using Proxy Base: ${getProxyBase() ?: "NONE"}")
-        logCallback("MovieBox: Initializing with Title='$title', Year='$year', S=$season, E=$episode")
 
         
         // 1. App Init (Optional but mimics client)
@@ -56,13 +54,11 @@ object CineStreamExtractors {
             val initUrl = getProxiedUrl("$BASE_URL/wefeed-h5-bff/app/get-latest-app-pkgs?app_name=moviebox")
             app.get(initUrl, headers = baseHeaders)
         } catch (e: Exception) {
-            logCallback("MovieBox Warning: Init failed: ${e.message}")
         }
 
         // 2. Search
         val subjectType = if (season != null) 2 else 1
         val searchKeyword = title ?: ""
-        logCallback("MovieBox: Performing search for '$searchKeyword' (matching year $year)...")
 
         val searchResponse = try {
             val searchUrl = getProxiedUrl("$BASE_URL/wefeed-h5-bff/web/subject/search")
@@ -77,21 +73,17 @@ object CineStreamExtractors {
                 )
             ).text
         } catch (e: Exception) {
-            logCallback("MovieBox Error: Search request failed: ${e.message}")
             return
         }
 
         val searchObj = try { JSONObject(searchResponse) } catch (e: Exception) { 
             val preview = searchResponse.take(150).replace("\n", " ")
-            logCallback("MovieBox Error: Failed to parse search JSON. Raw start: $preview")
             return 
         }
         val items = unwrapData(searchObj).optJSONArray("items") ?: run {
-            logCallback("MovieBox: No items found in search results.")
             return
         }
 
-        logCallback("MovieBox: Found ${items.length()} search candidates.")
 
         // 3. Match Matching
         val escapedTitle = Regex.escape(title ?: "")
@@ -104,31 +96,25 @@ object CineStreamExtractors {
             val rawTitle = item.optString("title", "")
             val cleanTitle = rawTitle.replace(SEASON_SUFFIX_REGEX, "").trim()
             
-            logCallback("MovieBox Candidate: '$rawTitle' (ID: $id)")
 
             val matchResult = titleMatchRegex.find(cleanTitle)
             if (matchResult != null || cleanTitle.equals(title, ignoreCase = true) || cleanTitle.contains(title ?: "", ignoreCase = true)) {
                 val lang = matchResult?.groups?.get(1)?.value ?: "Original"
-                logCallback("MovieBox MATCH: '$rawTitle' -> $lang")
                 matches.add(id to lang)
             } else {
-                logCallback("MovieBox SKIP: Title mismatch")
             }
         }
 
         if (matches.isEmpty()) {
-            logCallback("MovieBox: No matching subjects found.")
             return
         }
 
         // 4. Detail & Link Extraction
         matches.forEach { (subjectId, language) ->
-            logCallback("MovieBox: Fetching episode list for $subjectId...")
             val detailResponse = try {
                 val detailUrl = getProxiedUrl("$BASE_URL/wefeed-h5-bff/web/subject/detail?subjectId=$subjectId")
                 app.get(detailUrl, headers = baseHeaders).text
             } catch (e: Exception) {
-                logCallback("MovieBox Error: Detail fetch failed for $subjectId")
                 null
             }
 
@@ -146,13 +132,11 @@ object CineStreamExtractors {
                 "Origin" to "https://fmoviesunblocked.net"
             )
 
-            logCallback("MovieBox: Exacting stream from download endpoint...")
             val downloadUrl = getProxiedUrl("$BASE_URL/wefeed-h5-bff/web/subject/download?$params")
             
             val downloadResponseString = try {
                 app.get(downloadUrl, headers = downloadHeaders).text
             } catch (e: Exception) {
-                logCallback("MovieBox Error: Download fetch failed for $subjectId")
                 null
             }
 
@@ -161,7 +145,6 @@ object CineStreamExtractors {
 
             val downloads = sourceData.optJSONArray("downloads")
             if (downloads != null && downloads.length() > 0) {
-                logCallback("MovieBox: Found ${downloads.length()} download links!")
                 for (i in 0 until downloads.length()) {
                     val d = downloads.optJSONObject(i) ?: continue
                     val dlink = d.optString("url")
@@ -179,12 +162,10 @@ object CineStreamExtractors {
                     }
                 }
             } else {
-                logCallback("MovieBox: No streams found in download endpoint.")
             }
 
             val subtitlesList = sourceData.optJSONArray("captions")
             if (subtitlesList != null && subtitlesList.length() > 0) {
-                logCallback("MovieBox: Found ${subtitlesList.length()} subtitle tracks.")
                 for (i in 0 until subtitlesList.length()) {
                     val s = subtitlesList.optJSONObject(i) ?: continue
                     val slink = s.optString("url")
