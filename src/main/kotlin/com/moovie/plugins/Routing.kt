@@ -123,6 +123,8 @@ fun Application.configureRouting() {
                           }
                   )
                   .build()
+                  
+                  .build()
 
   routing {
     get("/") { call.respondText("Moovie Mega-Scraper v4 (40+ Sources) is Live!") }
@@ -239,22 +241,23 @@ fun Application.configureRouting() {
       }
 
       val id = tmdbId ?: mediaTitle // Use tmdbId as id if available, otherwise title
+                
+      logToFile("[SCRAPE-DEBUG] 🏁 NEW REQUEST: title=$mediaTitle, tmdbId=$tmdbId, year=$year, s=$season, e=$episode")
 
       var imdbId = call.request.queryParameters["imdbId"]
-      if (imdbId.isNullOrBlank() && tmdbId != null) {
+      if (imdbId.isNullOrBlank() && !tmdbId.isNullOrBlank()) {
+          println("[SCRAPE] Resolving IMDb from TMDB: $tmdbId")
           try {
-              val tmdbApiKey = "f02a0c39f2e7a175fec9f673ff440c4e"
               val mediaType = if (season != null) "tv" else "movie"
-              val extUrl = "https://api.themoviedb.org/3/$mediaType/$tmdbId/external_ids?api_key=$tmdbApiKey"
-              val metaRes = app.get(extUrl).text
-              val metaJson = JSONObject(metaRes)
-              imdbId = metaJson.optString("imdb_id").takeIf { it.isNotBlank() }
-              println("Resolved IMDb ID from TMDB: $imdbId")
+              val tmdbUrl = CineStreamExtractors.getProxiedUrl("https://api.themoviedb.org/3/$mediaType/$tmdbId/external_ids?api_key=f02a0c39f2e7a175fec9f673ff440c4e")
+              val response = app.get(tmdbUrl).text
+              val json = JSONObject(response)
+              imdbId = json.optString("imdb_id").takeIf { it.isNotBlank() }
+              println("[SCRAPE] Resolved IMDb: $imdbId")
           } catch (e: Exception) {
-              println("Failed to resolve IMDb ID: ${e.message}")
+              println("[SCRAPE] TMDB resolution failed: ${e.message}")
           }
       }
-
       val streamsList = Collections.synchronizedList(mutableListOf<JSONObject>())
       val eventChannel =
               if (isStreaming)

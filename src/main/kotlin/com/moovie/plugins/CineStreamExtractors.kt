@@ -251,40 +251,26 @@ object CineStreamExtractors {
         callback: (ExtractorLink) -> Unit
     ) {
         val allmovielandAPI = "https://allmovieland.you"
-        println("[AML] Fetching player.js...")
-        val playerScript = try { app.get(getProxiedUrl("https://allmovieland.link/player.js?v=60%20128")).text } catch (e: Exception) {
-            println("[AML] player.js failed: ${e.message}")
-            return
-        }
-        val domainRegex = Regex("const AwsIndStreamDomain.*'(.*)';")
-        val host = domainRegex.find(playerScript)?.groupValues?.getOrNull(1) ?: run {
-            println("[AML] Could not find host in player.js. Script snippet: ${playerScript.take(200)}")
-            return
-        }
-        println("[AML] Found host: $host")
-        val referer = "$allmovielandAPI/"
-
-        val playUrl = "$host/play/$id"
-        println("[AML] Fetching play page: $playUrl")
         val res = try {
             val doc = app.get(playUrl, referer = referer).document
-            val script = doc.selectFirst("script:containsData(playlist)")
-            println("[AML] Script found: ${script != null}")
-            script?.data()
-                ?.substringAfter("{")
-                ?.substringBefore(";")
-                ?.substringBefore(")")
+            val script = doc.selectFirst("script:containsData(\"file\":)")
+            if (script == null) {
+                val altScript = doc.select("script").find { it.data().contains("\"file\":") }
+                altScript?.data()
+                    ?.substringAfter("{")
+                    ?.substringBeforeLast("}")
+            } else {
+                script.data()
+                    ?.substringAfter("{")
+                    ?.substringBeforeLast("}")
+            }
         } catch (e: Exception) {
-            println("[AML] play page failed: ${e.message}")
+            println("[AML] Extraction failed: ${e.message}")
             null
         }
         
-        if (res == null) {
-            println("[AML] No playlist found in page.")
-            return
-        }
-        println("[AML] Playlist JSON snippet: ${res.take(150)}")
-
+        if (res == null) return
+        
         val json = try { JSONObject("{$res}") } catch (e: Exception) {
             println("[AML] JSON parse failed: ${e.message}")
             return
@@ -292,6 +278,8 @@ object CineStreamExtractors {
         val key = json.optString("key")
         val fileUri = json.optString("file")
         println("[AML] key=$key fileUri=$fileUri")
+
+     println("[AML] key=$key fileUri=$fileUri")
         if (key.isBlank() || fileUri.isBlank()) {
             println("[AML] Missing key or fileUri.")
             return
