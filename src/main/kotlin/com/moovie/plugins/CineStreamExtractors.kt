@@ -53,18 +53,24 @@ object CineStreamExtractors {
             val proxiedPageUrl = getProxiedUrl(pageUrl)
             val doc = try { app.get(proxiedPageUrl).document } catch (e: Exception) { return@safeAmap }
             
-            // Verify IMDb ID on the page - STRICT CHECK
+            // Verify IMDb ID on the page - Trust it 100% if found
             val foundImdbId = doc.select("a[href*=\"imdb.com/title/\"]").attr("href")
                 .substringAfter("title/").substringBefore("/")
             
-            // Title/Year Verification to avoid sequels/wrong versions
-            val pageTitle = doc.title().lowercase()
-            val requestedTitle = title?.lowercase() ?: ""
-            val normPage = normalize(pageTitle)
-            val normReq = normalize(requestedTitle)
-            
-            if (normReq.isNotEmpty() && !normPage.contains(normReq)) return@safeAmap
-            if (year != null && !pageTitle.contains(year)) return@safeAmap
+            val idMatch = (foundImdbId == imdbId) || (foundImdbId.isBlank() && doc.body().text().contains(imdbId ?: "---"))
+
+            if (!idMatch) {
+                // Metadata Fallback for RogMovies
+                val pageTitle = doc.title().lowercase()
+                val fullText = doc.body().text().lowercase()
+                val normReq = normalize(title ?: "")
+                
+                // If title and text don't have the title, it's likely wrong
+                if (normReq.isNotEmpty() && !normalize(pageTitle).contains(normReq) && !normalize(fullText).contains(normReq)) return@safeAmap
+                
+                // If year is specified but nowhere on the page, return early
+                if (year != null && !pageTitle.contains(year) && !fullText.contains(year)) return@safeAmap
+            }
 
             if (season == null) {
                 // MOVIE LOGIC
@@ -398,14 +404,13 @@ object CineStreamExtractors {
         val res = try {
             val doc = app.get(playUrl, referer = referer).document
             
-            // Metadata Verification for AllMoviesLand (avoid fake/upcoming placeholder posts)
+            // Metadata Verification for AllMoviesLand (loosen to search whole page)
             val pageTitle = doc.select("h1, .video-title").text().lowercase()
-            val requestedTitle = title?.lowercase() ?: ""
-            val normPage = normalize(pageTitle)
-            val normReq = normalize(requestedTitle)
+            val fullText = doc.body().text().lowercase()
+            val normReq = normalize(title ?: "")
 
-            if (normReq.isNotEmpty() && !normPage.contains(normReq)) return
-            if (year != null && !pageTitle.contains(year)) return
+            if (normReq.isNotEmpty() && !normalize(pageTitle).contains(normReq) && !normalize(fullText).contains(normReq)) return
+            if (year != null && !pageTitle.contains(year) && !fullText.contains(year)) return
 
             val script = doc.selectFirst("script:containsData(\"file\":)")
             if (script == null) {
