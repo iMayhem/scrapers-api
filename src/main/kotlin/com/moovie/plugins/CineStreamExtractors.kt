@@ -685,4 +685,154 @@ object CineStreamExtractors {
         return unwrapData(detailObj).optJSONObject("subject")
     }
 
+    suspend fun invokeMoviesDrive(
+        imdbId: String? = null,
+        title: String? = null,
+        year: String? = null,
+        season: Int? = null,
+        episode: Int? = null,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        if (imdbId == null) return
+        val moviesdriveAPI = "https://moviesdrive.forum"
+        
+        // 1. Search by IMDb ID
+        val searchUrl = getProxiedUrl("$moviesdriveAPI/searchapi.php?q=$imdbId")
+        val jsonString = try { app.get(searchUrl).text } catch (e: Exception) { return }
+        val root = tryParseJson<JSONObject>(jsonString) ?: return
+        if (!root.has("hits")) return
+        val hits = root.optJSONArray("hits") ?: return
+
+        var permalink = ""
+        for (i in 0 until hits.length()) {
+            val hit = hits.optJSONObject(i) ?: continue
+            val doc = hit.optJSONObject("document") ?: continue
+            val currentImdbId = doc.optString("imdb_id")
+            if (imdbId == currentImdbId) {
+                permalink = doc.optString("permalink")
+                break
+            }
+        }
+        
+        if (permalink.isBlank()) return
+
+        // 2. Process Page
+        val pageUrl = getProxiedUrl(moviesdriveAPI + permalink)
+        val document = try { app.get(pageUrl).document } catch (e: Exception) { return }
+        
+        // 3. Strict Match Fallback (Title/Year)
+        val pageTitleExtracted = document.title().lowercase()
+        val fullText = document.body().text().lowercase()
+        val normReq = normalize(title ?: "")
+        if (normReq.isNotEmpty() && !normalize(pageTitleExtracted).contains(normReq) && !normalize(fullText).contains(normReq)) return
+        if (year != null && !pageTitleExtracted.contains(year) && !fullText.contains(year)) return
+
+        val sourceLinks = mutableListOf<String>()
+
+        if (season == null) {
+            document.select("h5 > a").forEach {
+                sourceLinks.add(it.attr("href"))
+            }
+        } else {
+            // TV SHOW logic
+            val sSlug = season.toString().padStart(2, '0')
+            val eSlug = episode.toString().padStart(2, '0')
+            val stag = "(?i)(Season $season|S$sSlug)"
+            val sep = "(?i)(Ep(?:isode)? $episode|Ep(?:isode)?$eSlug|Ep$eSlug|Ep$episode)"
+            
+            document.select("h5:matches($stag)").forEach { entry ->
+                val href = entry.nextElementSibling()?.selectFirst("a")?.attr("href") ?: ""
+                if (href.isNotBlank()) {
+                    val epDocUrl = getProxiedUrl(href)
+                    val epDoc = try { app.get(epDocUrl).document } catch(e:Exception){return@forEach}
+                    val fEp = epDoc.selectFirst("h5:matches($sep)") ?: epDoc.selectFirst("span:matches($sep)")?.parent()?.nextElementSibling()
+                    
+                    var current = fEp?.nextElementSibling()
+                    while(current != null && (current.tagName() == "h5" || current.tagName() == "p")) {
+                        if (current.text().contains("HubCloud", ignoreCase=true) || current.text().contains("gdflix", ignoreCase=true) || current.text().contains("gdlink", ignoreCase=true)) {
+                            val aHref = current.selectFirst("a")?.attr("href")
+                            if(aHref != null) sourceLinks.add(aHref)
+                        } else if(current.tagName() == "h5") {
+                            // If it's a new h5 but not a link, might be next episode marker
+                            // But usually links are directly under it
+                            val aHref = current.selectFirst("a")?.attr("href")
+                            if(aHref != null) {
+                                sourceLinks.add(aHref)
+                            } else {
+                                break
+                            }
+                        }
+                        current = current.nextElementSibling()
+                    }
+                    
+                    if (sourceLinks.isEmpty() && fEp != null) {
+                         fEp.nextElementSibling()?.select("a")?.forEach { a ->
+                             sourceLinks.add(a.attr("href"))
+                         }
+                    }
+                }
+            }
+        }
+
+        // 4. Resolve HubCloud / GDFlix
+        sourceLinks.safeAmap { link ->
+            val resolvedUrl = getProxiedUrl(link)
+            val doc = try { app.get(resolvedUrl).document } catch(e:Exception){return@safeAmap}
+            
+            if (link.contains("hubcloud", ignoreCase=true) || link.contains("vcloud", ignoreCase=true)) {
+                var scriptLink = if(link.contains("/video/")) {
+                    doc.selectFirst("div.vd > center > a")?.attr("href") ?: ""
+                } else {
+                    val scriptTag = doc.select("script:containsData(url)").firstOrNull()?.data() ?: ""
+                    Regex("var url = '([^']*)'").find(scriptTag)?.groupValues?.get(1) ?: ""
+                }
+                if (scriptLink.isBlank()) return@safeAmap
+                if (!scriptLink.startsWith("http")) {
+                    scriptLink = "https://" + java.net.URI(link).host + scriptLink
+                }
+                
+                val innerDoc = try { app.get(getProxiedUrl(scriptLink)).document } catch(e:Exception){return@safeAmap}
+                val header = innerDoc.select("div.card-header").text()
+                val size = innerDoc.select("i#size").text()
+                val quality = getIndexQuality(header)
+                
+                innerDoc.select("h2 a.btn").forEach { btn ->
+                    val dlink = btn.attr("href")
+                    val text = btn.text()
+                    if (text.contains("Server : 10Gbps", ignoreCase=true)) {
+                        try {
+                            val res = app.get(getProxiedUrl(dlink), allowRedirects = false)
+                            val redirect = res.headers["location"] ?: res.headers["Location"]
+                            if (redirect != null) {
+                                val finalUrl = if(redirect.contains("link=")) redirect.substringAfter("link=") else redirect
+                                callback(newExtractorLink("MoviesDrive", "MoviesDrive HD $header [$size]", finalUrl, ExtractorLinkType.VIDEO, quality))
+                            }
+                        } catch(e:Exception){}
+                    }
+                }
+            } else if (link.contains("gdflix", ignoreCase=true) || link.contains("gdlink", ignoreCase=true)) {
+                val fileName = doc.select("ul > li.list-group-item:contains(Name)").text().substringAfter("Name : ")
+                val fileSize = doc.select("ul > li.list-group-item:contains(Size)").text().substringAfter("Size : ")
+                val quality = getIndexQuality(fileName)
+                
+                doc.select("div.text-center a").forEach { anchor ->
+                    val text = anchor.select("a").text()
+                    val aLink = anchor.attr("href")
+                    if (text.contains("DIRECT DL", ignoreCase=true) || text.contains("DIRECT SERVER", ignoreCase=true)) {
+                        callback(newExtractorLink("MoviesDrive", "MoviesDrive GDFlix $fileName [$fileSize]", aLink, ExtractorLinkType.VIDEO, quality))
+                    } else if (text.contains("FAST CLOUD", ignoreCase=true)) {
+                        try {
+                            val fastDoc = app.get(getProxiedUrl(aLink)).document
+                            val fastLink = fastDoc.select("div.card-body a").attr("href")
+                            if (fastLink.isNotBlank()) {
+                                callback(newExtractorLink("MoviesDrive", "MoviesDrive FastCloud $fileName [$fileSize]", fastLink, ExtractorLinkType.VIDEO, quality))
+                            }
+                        } catch(e:Exception){}
+                    }
+                }
+            }
+        }
+    }
+
 }
+

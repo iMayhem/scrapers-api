@@ -435,6 +435,37 @@ fun Application.configureRouting() {
                            }
                    )
 
+                    // MoviesDrive
+                    tasks.add(
+                            async {
+                              try {
+                                if (!imdbId.isNullOrBlank()) {
+                                  CineStreamExtractors.invokeMoviesDrive(
+                                          imdbId = imdbId,
+                                          title = mediaTitle,
+                                          year = year,
+                                          season = season?.toIntOrNull(),
+                                          episode = episode?.toIntOrNull(),
+                                          callback = { link ->
+                                            launch {
+                                              addStream(
+                                                      server = link.name,
+                                                      url = link.url,
+                                                      type = if (link.isM3u8 || link.url.contains(".m3u8")) "hls" else "mp4",
+                                                      quality = if (link.quality > 0) "${link.quality}p" else "Auto",
+                                                      headers = link.headers,
+                                                      providerKey = "MoviesDrive"
+                                              )
+                                            }
+                                          }
+                                  )
+                                }
+                              } catch (e: Exception) {
+                                println("[SCRAPE] MoviesDrive failed: ${e.message}")
+                              }
+                            }
+                    )
+
                   tasks.awaitAll()
                 }
                 eventChannel?.close()
