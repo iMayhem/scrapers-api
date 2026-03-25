@@ -564,18 +564,30 @@ fun Application.configureRouting() {
       
       try {
           val response = client.newCall(reqBuilder.build()).execute()
-          val contentType = response.header("Content-Type") ?: "video/mp4"
+          val upstreamCT = response.header("Content-Type") ?: "video/mp4"
+          
+          // Map upstream Content-Type to a Ktor ContentType
+          val ktorContentType = try {
+              io.ktor.http.ContentType.parse(upstreamCT)
+          } catch (e: Exception) {
+              io.ktor.http.ContentType.Video.MP4
+          }
           
           if (response.code == 206 || response.code == 200) {
               call.response.status(HttpStatusCode.fromValue(response.code))
-              call.response.headers.append(HttpHeaders.ContentType, contentType)
+              // CORS headers — must be set before respondOutputStream
+              call.response.headers.append(HttpHeaders.AccessControlAllowOrigin, "*")
+              call.response.headers.append(HttpHeaders.AccessControlAllowMethods, "GET, HEAD, OPTIONS")
+              call.response.headers.append(HttpHeaders.AccessControlAllowHeaders, "*")
+              call.response.headers.append(HttpHeaders.AccessControlExposeHeaders, "Content-Range, Content-Length, Content-Type")
               val cr = response.header("Content-Range")
               if (cr != null) call.response.headers.append(HttpHeaders.ContentRange, cr)
               val cl = response.header("Content-Length")
               if (cl != null) call.response.headers.append(HttpHeaders.ContentLength, cl)
-              call.response.headers.append(HttpHeaders.AccessControlAllowOrigin, "*")
               
-              call.respondOutputStream {
+              // Use respondOutputStream with explicit contentType to prevent
+              // Ktor from overriding it with application/octet-stream (which triggers ORB)
+              call.respondOutputStream(contentType = ktorContentType) {
                   response.body?.byteStream()?.copyTo(this)
               }
           } else {
