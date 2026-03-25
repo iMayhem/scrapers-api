@@ -90,15 +90,21 @@ object CineStreamExtractors {
                         val sourceUrl = source.attr("href")
                         val sourceText = source.text()
                         if (sourceUrl.isNotBlank() && !sourceUrl.contains("telegram", true)) {
-                            callback(
-                                newExtractorLink(
-                                    source = "RogMovies",
-                                    name = "RogMovies $sourceText",
-                                    url = sourceUrl,
-                                    quality = getIndexQuality(sourceText),
-                                    type = ExtractorLinkType.VIDEO
+                            if (sourceUrl.contains("vcloud", ignoreCase=true) || sourceUrl.contains("hubcloud", ignoreCase=true) || sourceUrl.contains("fastdl", ignoreCase=true)) {
+                                resolveVCloudOrGDFlix(sourceUrl, "RogMovies") { resolvedLink ->
+                                    callback(resolvedLink.copy(name = "RogMovies ${resolvedLink.name.replace("RogMovies ", "")}"))
+                                }
+                            } else {
+                                callback(
+                                    newExtractorLink(
+                                        source = "RogMovies",
+                                        name = "RogMovies $sourceText",
+                                        url = sourceUrl,
+                                        quality = getIndexQuality(sourceText),
+                                        type = ExtractorLinkType.VIDEO
+                                    )
                                 )
-                            )
+                            }
                         }
                     }
                 }
@@ -126,15 +132,21 @@ object CineStreamExtractors {
                         
                         val finalLink = epLink?.attr("href")
                         if (!finalLink.isNullOrBlank()) {
-                            callback(
-                                newExtractorLink(
-                                    source = "RogMovies",
-                                    name = "RogMovies S$season E$episode",
-                                    url = finalLink,
-                                    quality = Qualities.P1080.value,
-                                    type = ExtractorLinkType.VIDEO
+                            if (finalLink.contains("vcloud", ignoreCase=true) || finalLink.contains("hubcloud", ignoreCase=true) || finalLink.contains("fastdl", ignoreCase=true)) {
+                                resolveVCloudOrGDFlix(finalLink, "RogMovies") { resolvedLink ->
+                                    callback(resolvedLink.copy(name = "RogMovies S$season E$episode ${resolvedLink.name.replace("RogMovies ", "")}"))
+                                }
+                            } else {
+                                callback(
+                                    newExtractorLink(
+                                        source = "RogMovies",
+                                        name = "RogMovies S$season E$episode",
+                                        url = finalLink,
+                                        quality = Qualities.P1080.value,
+                                        type = ExtractorLinkType.VIDEO
+                                    )
                                 )
-                            )
+                            }
                         }
                     }
                 }
@@ -776,59 +788,67 @@ object CineStreamExtractors {
 
         // 4. Resolve HubCloud / GDFlix
         sourceLinks.safeAmap { link ->
-            val resolvedUrl = getProxiedUrl(link)
-            val doc = try { app.get(resolvedUrl).document } catch(e:Exception){return@safeAmap}
+            resolveVCloudOrGDFlix(link, "MoviesDrive", callback)
+        }
+    }
+    private suspend fun resolveVCloudOrGDFlix(
+        link: String,
+        sourceTag: String,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val resolvedUrl = getProxiedUrl(link)
+        val doc = try { app.get(resolvedUrl).document } catch(e:Exception){return}
+        
+        if (link.contains("hubcloud", ignoreCase=true) || link.contains("vcloud", ignoreCase=true) || link.contains("fastdl", ignoreCase=true)) {
+            var scriptLink = if(link.contains("/video/")) {
+                doc.selectFirst("div.vd > center > a")?.attr("href") ?: ""
+            } else {
+                val scriptTag = doc.select("script:containsData(url)").firstOrNull()?.data() ?: ""
+                Regex("var url = '([^']*)'").find(scriptTag)?.groupValues?.get(1) ?: ""
+            }
+            if (scriptLink.isBlank()) return
+            if (!scriptLink.startsWith("http")) {
+                scriptLink = "https://" + java.net.URI(link).host + scriptLink
+            }
             
-            if (link.contains("hubcloud", ignoreCase=true) || link.contains("vcloud", ignoreCase=true)) {
-                var scriptLink = if(link.contains("/video/")) {
-                    doc.selectFirst("div.vd > center > a")?.attr("href") ?: ""
-                } else {
-                    val scriptTag = doc.select("script:containsData(url)").firstOrNull()?.data() ?: ""
-                    Regex("var url = '([^']*)'").find(scriptTag)?.groupValues?.get(1) ?: ""
+            val innerDoc = try { app.get(getProxiedUrl(scriptLink)).document } catch(e:Exception){return}
+            val header = innerDoc.select("div.card-header").text()
+            val size = innerDoc.select("i#size").text()
+            val quality = getIndexQuality(header)
+            
+            innerDoc.select("h2 a.btn, .btn-success, .btn-primary").forEach { btn ->
+                val dlink = btn.attr("href")
+                val text = btn.text()
+                if (text.contains("10Gbps", ignoreCase=true) || text.contains("FSL", ignoreCase=true) || text.contains("Download FSLv2", ignoreCase=true)) {
+                    val serverName = if (text.contains("10Gbps", true)) "HD 10Gbps" else if(text.contains("FSLv2", true)) "FSLv2" else "FSL"
+                    try {
+                        val res = app.get(getProxiedUrl(dlink), allowRedirects = false)
+                        val redirect = res.headers["location"] ?: res.headers["Location"]
+                        if (redirect != null) {
+                            val finalUrl = if(redirect.contains("link=")) redirect.substringAfter("link=") else redirect
+                            callback(newExtractorLink(sourceTag, "$sourceTag $serverName $header [$size]", finalUrl, ExtractorLinkType.VIDEO, quality))
+                        }
+                    } catch(e:Exception){}
                 }
-                if (scriptLink.isBlank()) return@safeAmap
-                if (!scriptLink.startsWith("http")) {
-                    scriptLink = "https://" + java.net.URI(link).host + scriptLink
-                }
-                
-                val innerDoc = try { app.get(getProxiedUrl(scriptLink)).document } catch(e:Exception){return@safeAmap}
-                val header = innerDoc.select("div.card-header").text()
-                val size = innerDoc.select("i#size").text()
-                val quality = getIndexQuality(header)
-                
-                innerDoc.select("h2 a.btn").forEach { btn ->
-                    val dlink = btn.attr("href")
-                    val text = btn.text()
-                    if (text.contains("Server : 10Gbps", ignoreCase=true)) {
-                        try {
-                            val res = app.get(getProxiedUrl(dlink), allowRedirects = false)
-                            val redirect = res.headers["location"] ?: res.headers["Location"]
-                            if (redirect != null) {
-                                val finalUrl = if(redirect.contains("link=")) redirect.substringAfter("link=") else redirect
-                                callback(newExtractorLink("MoviesDrive", "MoviesDrive HD $header [$size]", finalUrl, ExtractorLinkType.VIDEO, quality))
-                            }
-                        } catch(e:Exception){}
-                    }
-                }
-            } else if (link.contains("gdflix", ignoreCase=true) || link.contains("gdlink", ignoreCase=true)) {
-                val fileName = doc.select("ul > li.list-group-item:contains(Name)").text().substringAfter("Name : ")
-                val fileSize = doc.select("ul > li.list-group-item:contains(Size)").text().substringAfter("Size : ")
-                val quality = getIndexQuality(fileName)
-                
-                doc.select("div.text-center a").forEach { anchor ->
-                    val text = anchor.select("a").text()
-                    val aLink = anchor.attr("href")
-                    if (text.contains("DIRECT DL", ignoreCase=true) || text.contains("DIRECT SERVER", ignoreCase=true)) {
-                        callback(newExtractorLink("MoviesDrive", "MoviesDrive GDFlix $fileName [$fileSize]", aLink, ExtractorLinkType.VIDEO, quality))
-                    } else if (text.contains("FAST CLOUD", ignoreCase=true)) {
-                        try {
-                            val fastDoc = app.get(getProxiedUrl(aLink)).document
-                            val fastLink = fastDoc.select("div.card-body a").attr("href")
-                            if (fastLink.isNotBlank()) {
-                                callback(newExtractorLink("MoviesDrive", "MoviesDrive FastCloud $fileName [$fileSize]", fastLink, ExtractorLinkType.VIDEO, quality))
-                            }
-                        } catch(e:Exception){}
-                    }
+            }
+        } else if (link.contains("gdflix", ignoreCase=true) || link.contains("gdlink", ignoreCase=true)) {
+            val fileName = doc.select("ul > li.list-group-item:contains(Name)").text().substringAfter("Name : ")
+            val fileSize = doc.select("ul > li.list-group-item:contains(Size)").text().substringAfter("Size : ")
+            val quality = getIndexQuality(fileName)
+            
+            doc.select("div.text-center a").forEach { anchor ->
+                val text = anchor.select("a").text()
+                val aLink = anchor.attr("href")
+                if (text.contains("DIRECT DL", ignoreCase=true) || text.contains("DIRECT SERVER", ignoreCase=true)) {
+                    callback(newExtractorLink(sourceTag, "$sourceTag GDFlix $fileName [$fileSize]", aLink, ExtractorLinkType.VIDEO, quality))
+                } else if (text.contains("FAST CLOUD", ignoreCase=true)) {
+                    try {
+                        val fastDoc = app.get(getProxiedUrl(aLink)).document
+                        val fastLink = fastDoc.select("div.card-body a").attr("href")
+                        if (fastLink.isNotBlank()) {
+                            callback(newExtractorLink(sourceTag, "$sourceTag FastCloud $fileName [$fileSize]", fastLink, ExtractorLinkType.VIDEO, quality))
+                        }
+                    } catch(e:Exception){}
                 }
             }
         }
