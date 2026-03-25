@@ -123,8 +123,6 @@ fun Application.configureRouting() {
                           }
                   )
                   .build()
-                  
-                  .build()
 
   routing {
     get("/") { call.respondText("Moovie Mega-Scraper v4 (40+ Sources) is Live!") }
@@ -201,21 +199,19 @@ fun Application.configureRouting() {
       val configUrl =
               System.getenv("CONFIG_URL")
                       ?: "https://gist.githubusercontent.com/iMayhem/abbb593bdcd0bfc3d54a6284e81cc880/raw/scrapers.json"
-      try {
+      val configRes = try {
         client.newCall(Request.Builder().url("$configUrl?t=${System.currentTimeMillis()}").build())
                 .execute()
                 .use { resp ->
-                  if (resp.isSuccessful) {
-                    val body = resp.body?.string() ?: "{}"
-                    call.respondText(body, ContentType.Application.Json)
-                  } else {
-                    call.respondText(
-                            """{"providers":[],"preferences":{"prioritizeBy":"latency","maxPreferredSizeGb":3.0}}""",
-                            ContentType.Application.Json
-                    )
-                  }
+                  if (resp.isSuccessful) resp.body?.string() else null
                 }
       } catch (e: Exception) {
+        null
+      }
+
+      if (configRes != null) {
+        call.respondText(configRes, ContentType.Application.Json)
+      } else {
         call.respondText(
                 """{"providers":[],"preferences":{"prioritizeBy":"latency","maxPreferredSizeGb":3.0}}""",
                 ContentType.Application.Json
