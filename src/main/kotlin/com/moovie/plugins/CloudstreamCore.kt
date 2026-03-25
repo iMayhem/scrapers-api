@@ -695,6 +695,26 @@ data class TripleOneMoviesServer(
     val data: String,
 )
 
+// ═══════════════════════════════════════════════
+// 7. ROGMOVIES MODELS
+// ═══════════════════════════════════════════════
+
+data class VegaSearchResponse(
+    val hits: List<VegaHit>
+)
+
+data class VegaHit(
+    val document: VegaDocument
+)
+
+data class VegaDocument(
+    val id: String,
+    val imdb_id: String?,
+    val post_title: String,
+    val permalink: String,
+    val post_thumbnail: String
+)
+
 fun <T> JSONObject.parsedSafe(): T? = null // Stub for complex parsing
 
 fun JSONObject.optString(key: String, fallback: String): String = if (has(key)) getString(key) else fallback

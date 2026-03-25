@@ -400,6 +400,36 @@ fun Application.configureRouting() {
                               }
                           }
                   )
+ 
+                   // RogMovies
+                   tasks.add(
+                           async {
+                             try {
+                               if (!imdbId.isNullOrBlank()) {
+                                 CineStreamExtractors.invokeRogmovies(
+                                         imdbId = imdbId,
+                                         season = season?.toIntOrNull(),
+                                         episode = episode?.toIntOrNull(),
+                                         subtitleCallback = { _ -> },
+                                         callback = { link ->
+                                           launch {
+                                             addStream(
+                                                     server = link.name,
+                                                     url = link.url,
+                                                     type = if (link.isM3u8 || link.url.contains(".m3u8")) "hls" else "mp4",
+                                                     quality = if (link.quality > 0) "${link.quality}p" else "Auto",
+                                                     headers = link.headers,
+                                                     providerKey = "RogMovies"
+                                             )
+                                           }
+                                         }
+                                 )
+                               }
+                             } catch (e: Exception) {
+                               println("[SCRAPE] RogMovies failed: ${e.message}")
+                             }
+                           }
+                   )
 
                   tasks.awaitAll()
                 }

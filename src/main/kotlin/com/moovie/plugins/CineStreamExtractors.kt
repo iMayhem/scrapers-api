@@ -13,8 +13,132 @@ object CineStreamExtractors {
         return "$cleanBase${sep}url=${URLEncoder.encode(url, "UTF-8")}"
     }
 
+    private fun fixUrl(url: String, domain: String): String {
+        if (url.startsWith("http")) return url
+        if (url.isEmpty()) return ""
+        val startsWithNoHttp = url.startsWith("//")
+        if (startsWithNoHttp) return "https:$url"
+        return if (url.startsWith('/')) "$domain$url" else "$domain/$url"
+    }
+
+    suspend fun invokeRogmovies(
+        imdbId: String? = null,
+        season: Int? = null,
+        episode: Int? = null,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        if (imdbId == null) return
+        val rogmoviesAPI = "https://rogmovies.vip"
+        
+        // 1. Search by IMDb ID
+        val searchUrl = getProxiedUrl("$rogmoviesAPI/search.php?q=$imdbId&page=1")
+        val json = try { app.get(searchUrl).text } catch (e: Exception) { return }
+        
+        val searchResponse = tryParseJson<VegaSearchResponse>(json) ?: return
+        val movieUrls = searchResponse.hits.map { hit ->
+            fixUrl(hit.document.permalink, rogmoviesAPI)
+        }
+
+        if (movieUrls.isEmpty()) return
+
+        // 2. Process each result (usually just one for a specific IMDb ID)
+        movieUrls.safeAmap { pageUrl ->
+            val proxiedPageUrl = getProxiedUrl(pageUrl)
+            val doc = try { app.get(proxiedPageUrl).document } catch (e: Exception) { return@safeAmap }
+            
+            // Verify IMDb ID on the page
+            val foundImdbId = doc.select("a[href*=\"imdb.com/title/\"]").attr("href")
+                .substringAfter("title/").substringBefore("/")
+            
+            if (foundImdbId != imdbId && !doc.body().text().contains(imdbId)) return@safeAmap
+
+            if (season == null) {
+                // MOVIE LOGIC
+                // Look for common download/stream button patterns on Vegamovies-like sites
+                doc.select("button.dwd-button, a.btn-download, a.dwd-button, .download-btn").safeAmap { btn ->
+                    var link = btn.parent()?.attr("href") ?: btn.attr("href")
+                    if (link.isNullOrBlank() || link == "#") {
+                        // Sometimes the button itself has the data or it's a sibling
+                        link = btn.select("a").attr("href").takeIf { it.isNotBlank() } ?: ""
+                    }
+                    if (link.isBlank()) return@safeAmap
+                    val absoluteLink = fixUrl(link, rogmoviesAPI)
+                    
+                    // Visit the intermediate link to find the actual file/embed links
+                    val downloadDoc = try { app.get(getProxiedUrl(absoluteLink)).document } catch (e: Exception) { return@safeAmap }
+                    downloadDoc.select("p > a, .download-links a, a.btn").safeAmap { source ->
+                        val sourceUrl = source.attr("href")
+                        val sourceText = source.text()
+                        if (sourceUrl.isNotBlank() && !sourceUrl.contains("telegram", true)) {
+                            callback(
+                                newExtractorLink(
+                                    source = "RogMovies",
+                                    name = "RogMovies $sourceText",
+                                    url = sourceUrl,
+                                    quality = getIndexQuality(sourceText),
+                                    type = ExtractorLinkType.VIDEO
+                                )
+                            )
+                        }
+                    }
+                }
+            } else {
+                // TV SHOW LOGIC
+                // Find Season block
+                val seasonText = "Season $season"
+                val seasonHeader = doc.select("h4, h3, p, strong").find { it.text().contains(seasonText, ignoreCase = true) }
+                
+                if (seasonHeader != null) {
+                    // Usually links follow the header
+                    val container = seasonHeader.parent()
+                    container?.select("a")?.toList()?.filter { 
+                        val t = it.text().lowercase()
+                        t.contains("v-cloud") || t.contains("single") || t.contains("episode") || t.contains("g-direct")
+                    }?.safeAmap { episodeListLink ->
+                        val epListUrl = fixUrl(episodeListLink.attr("href"), rogmoviesAPI)
+                        val epDoc = try { app.get(getProxiedUrl(epListUrl)).document } catch (e: Exception) { return@safeAmap }
+                        
+                        // Find the specific episode
+                        val epPattern = java.util.regex.Pattern.compile("(?i)Episode\\s*0*$episode\\b")
+                        val epElement = epDoc.getElementsMatchingText(epPattern).firstOrNull()
+                        val epLink = epElement?.parent()?.select("a")?.firstOrNull { it.text().contains("V-Cloud", true) || it.text().contains("Direct", true) }
+                                     ?: epElement?.nextElementSibling()?.select("a")?.firstOrNull { it.text().contains("V-Cloud", true) || it.text().contains("Direct", true) }
+                        
+                        val finalLink = epLink?.attr("href")
+                        if (!finalLink.isNullOrBlank()) {
+                            callback(
+                                newExtractorLink(
+                                    source = "RogMovies",
+                                    name = "RogMovies S$season E$episode",
+                                    url = finalLink,
+                                    quality = Qualities.P1080.value,
+                                    type = ExtractorLinkType.VIDEO
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private fun getProxyBase(): String? = System.getenv("SCRAPER_PROXY")
 
+
+    private fun getIndexQuality(str: String?): Int {
+        if (str.isNullOrBlank()) return Qualities.Unknown.value
+        Regex("""(\d{3,4})[pP]""").find(str)?.groupValues?.getOrNull(1)?.toIntOrNull()?.let {
+            return it
+        }
+        val lowerStr = str.lowercase()
+        return when {
+            lowerStr.contains("8k") -> 4320
+            lowerStr.contains("4k") -> 2160
+            lowerStr.contains("2k") -> 1440
+            else -> Qualities.Unknown.value
+        }
+    }
 
     private fun unwrapData(json: JSONObject): JSONObject {
         val data = json.optJSONObject("data") ?: return json
@@ -250,7 +374,11 @@ object CineStreamExtractors {
         episode: Int? = null,
         callback: (ExtractorLink) -> Unit
     ) {
-        val allmovielandAPI = "https://allmovieland.you"
+        if (id == null) return
+        val amlHost = "https://allmovieland.you"
+        val playUrl = if (season == null) "$amlHost/movie/$id" else "$amlHost/tv/$id"
+        val referer = "$amlHost/"
+
         val res = try {
             val doc = app.get(playUrl, referer = referer).document
             val script = doc.selectFirst("script:containsData(\"file\":)")
@@ -288,7 +416,7 @@ object CineStreamExtractors {
         val headers = mapOf("X-CSRF-TOKEN" to key, "Referer" to referer)
 
         val serverRes = try {
-            val fileUrl = if (fileUri.startsWith("http")) fileUri else if (fileUri.startsWith("/")) "$host$fileUri" else "$host/$fileUri"
+            val fileUrl = if (fileUri.startsWith("http")) fileUri else if (fileUri.startsWith("/")) "$amlHost$fileUri" else "$amlHost/$fileUri"
             app.get(fileUrl, headers = headers, referer = referer)
                 .text
                 .replace(Regex(""",\s*\[]"""), "")
@@ -330,7 +458,7 @@ object CineStreamExtractors {
         servers.safeAmap { (server, lang) ->
             val path = try {
                 app.post(
-                    "${host}/playlist/${server}.txt",
+                    "${amlHost}/playlist/${server}.txt",
                     headers = headers,
                     referer = referer
                 ).text
