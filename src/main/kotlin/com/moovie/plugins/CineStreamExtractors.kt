@@ -7,7 +7,8 @@ import java.net.URLEncoder
 object CineStreamExtractors {
 
     fun getProxiedUrl(url: String): String {
-        val proxyBase = System.getenv("SCRAPER_PROXY")?.trim() ?: "https://moovie-proxy.sujeetunbeatable.workers.dev"
+        val proxyBase = System.getenv("SCRAPER_PROXY")?.trim()?.takeIf { it.isNotEmpty() }
+            ?: "https://moovie-proxy.sujeetunbeatable.workers.dev"
         val cleanBase = proxyBase.removeSuffix("/")
         val sep = if (cleanBase.contains("?")) "&" else "?"
         return "$cleanBase${sep}url=${URLEncoder.encode(url, "UTF-8")}"
@@ -66,14 +67,39 @@ object CineStreamExtractors {
         }
         println("$tag Search hits count: ${searchResponse.hits.size}")
 
-        val movieUrls = searchResponse.hits.map { hit ->
-            println("$tag  hit: id=${hit.document.id} imdb=${hit.document.imdb_id} title=${hit.document.post_title} permalink=${hit.document.permalink}")
-            fixUrl(hit.document.permalink, rogmoviesAPI)
+        val exactHits = searchResponse.hits.filter { hit ->
+            val hitImdb = hit.document.imdb_id
+            val match = hitImdb == imdbId
+            println("$tag  hit: id=${hit.document.id} imdb=$hitImdb title=${hit.document.post_title} permalink=${hit.document.permalink} → imdbMatch=$match")
+            match
         }
 
-        if (movieUrls.isEmpty()) {
-            println("$tag ABORT: No movie URLs from search results")
-            return
+        // If no exact IMDb match, fall back to title search
+        val movieUrls: List<String>
+        if (exactHits.isNotEmpty()) {
+            println("$tag Using ${exactHits.size} exact IMDb match(es)")
+            movieUrls = exactHits.map { fixUrl(it.document.permalink, rogmoviesAPI) }
+        } else {
+            println("$tag No exact IMDb match — falling back to title search for '$title'")
+            val titleSearchUrl = getProxiedUrl("$rogmoviesAPI/search.php?q=${URLEncoder.encode(title ?: "", "UTF-8")}&page=1")
+            val titleJson = try {
+                val resp = app.get(titleSearchUrl)
+                println("$tag Title search HTTP ${resp.code} body_len=${resp.text.length}")
+                resp.text
+            } catch (e: Exception) {
+                println("$tag Title search FAILED: ${e.message}")
+                return
+            }
+            val titleResponse = tryParseJson<VegaSearchResponse>(titleJson)
+            if (titleResponse == null) {
+                println("$tag ABORT: Failed to parse title search response")
+                return
+            }
+            println("$tag Title search hits: ${titleResponse.hits.size}")
+            titleResponse.hits.forEach { hit ->
+                println("$tag  title-hit: imdb=${hit.document.imdb_id} title=${hit.document.post_title}")
+            }
+            movieUrls = titleResponse.hits.map { fixUrl(it.document.permalink, rogmoviesAPI) }
         }
         println("$tag Processing ${movieUrls.size} page(s): $movieUrls")
 
@@ -939,9 +965,25 @@ object CineStreamExtractors {
             } else {
                 val scriptTag = doc.select("script:containsData(url)").firstOrNull()?.data() ?: ""
                 println("$tag Script tag length=${scriptTag.length} preview='${scriptTag.take(200)}'")
-                val extracted = Regex("var url = '([^']*)'").find(scriptTag)?.groupValues?.get(1) ?: ""
-                println("$tag Extracted scriptLink from var url: '$extracted'")
+                // vcloud.zip uses: var url = '...'
+                // fastdl.zip uses: var reurl = "..."
+                val extracted = Regex("var url = '([^']+)'").find(scriptTag)?.groupValues?.get(1)
+                    ?: Regex("""var reurl = "([^"]+)"""").find(scriptTag)?.groupValues?.get(1)
+                    ?: ""
+                println("$tag Extracted scriptLink: '$extracted'")
                 extracted
+            }
+
+            // fastdl.zip wraps the real URL in a dl.php?link= param — extract it directly
+            if (scriptLink.contains("fastdl.zip/dl.php", ignoreCase = true)) {
+                val directUrl = scriptLink.substringAfter("link=").takeIf { it.startsWith("http") }
+                if (directUrl != null) {
+                    println("$tag FastDL direct URL extracted: $directUrl")
+                    callback(newExtractorLink(sourceTag, "$sourceTag FastDL", directUrl, ExtractorLinkType.VIDEO, Qualities.Unknown.value))
+                } else {
+                    println("$tag FastDL WARN: could not extract direct URL from $scriptLink")
+                }
+                return
             }
 
             if (scriptLink.isBlank()) {

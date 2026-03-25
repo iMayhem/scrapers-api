@@ -32,3 +32,12 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
         jvmTarget = "21"
     }
 }
+
+tasks.register<JavaExec>("runDebugRog") {
+    group = "debug"
+    description = "Run the RogMovies debug scraper locally"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.moovie.DebugRogMoviesKt")
+    val proxy = System.getenv("SCRAPER_PROXY")?.takeIf { it.isNotEmpty() }
+    if (proxy != null) environment("SCRAPER_PROXY", proxy)
+}
