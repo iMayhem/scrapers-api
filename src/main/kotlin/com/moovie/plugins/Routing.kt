@@ -242,7 +242,7 @@ fun Application.configureRouting() {
 
       val id = tmdbId ?: mediaTitle // Use tmdbId as id if available, otherwise title
                 
-      logToFile("[SCRAPE-DEBUG] 🏁 NEW REQUEST: title=$mediaTitle, tmdbId=$tmdbId, year=$year, s=$season, e=$episode")
+      println("[SCRAPE] 🏁 NEW REQUEST: title=$mediaTitle, tmdbId=$tmdbId, year=$year, s=$season, e=$episode")
 
       var imdbId = call.request.queryParameters["imdbId"]
       if (imdbId.isNullOrBlank() && !tmdbId.isNullOrBlank()) {
@@ -508,8 +508,10 @@ fun Application.configureRouting() {
           if (response.code == 206 || response.code == 200) {
               call.response.status(HttpStatusCode.fromValue(response.code))
               call.response.headers.append(HttpHeaders.ContentType, contentType)
-              response.header("Content-Range")?.let { call.response.headers.append(HttpHeaders.ContentRange, it) }
-              response.header("Content-Length")?.let { call.response.headers.append(HttpHeaders.ContentLength, it) }
+              val cr = response.header("Content-Range")
+              if (cr != null) call.response.headers.append(HttpHeaders.ContentRange, cr)
+              val cl = response.header("Content-Length")
+              if (cl != null) call.response.headers.append(HttpHeaders.ContentLength, cl)
               call.response.headers.append(HttpHeaders.AccessControlAllowOrigin, "*")
               
               call.respondOutputStream {
