@@ -190,14 +190,8 @@ object CineStreamExtractors {
                         val sourceUrl = source.attr("href")
                         val sourceText = source.text()
                         println("$tag [MOVIE] Source: text='$sourceText' url='$sourceUrl'")
-                        if (sourceUrl.isBlank()) {
-                            println("$tag [MOVIE] SKIP: blank source URL")
-                            return@safeAmap
-                        }
-                        if (sourceUrl.contains("telegram", true)) {
-                            println("$tag [MOVIE] SKIP: telegram link")
-                            return@safeAmap
-                        }
+                        if (sourceUrl.isBlank() || sourceUrl.contains("telegram", true)) return@safeAmap
+
                         if (sourceUrl.contains("vcloud", ignoreCase=true) || sourceUrl.contains("hubcloud", ignoreCase=true) || sourceUrl.contains("fastdl", ignoreCase=true)) {
                             println("$tag [MOVIE] Resolving VCloud/HubCloud: $sourceUrl")
                             resolveVCloudOrGDFlix(sourceUrl, "RogMovies") { resolvedLink ->
@@ -1009,28 +1003,54 @@ object CineStreamExtractors {
                 val dlink = btn.attr("href")
                 val text = btn.text()
                 println("$tag Checking btn '$text' -> '$dlink'")
-                // Only FSLv2 and FastDL produce reliable direct links — skip FSL and 10Gbps
-                if (text.contains("FSLv2", ignoreCase=true) || text.contains("Download FSLv2", ignoreCase=true)) {
-                    println("$tag Matched server 'FSLv2', following redirect for: $dlink")
-                    try {
-                        val res = app.get(getProxiedUrl(dlink), allowRedirects = false)
-                        println("$tag Redirect response HTTP ${res.code}")
-                        val allHeaders = res.headers.toMap()
-                        println("$tag Response headers: $allHeaders")
-                        val redirect = res.headers["location"] ?: res.headers["Location"]
-                        println("$tag Redirect location: '$redirect'")
-                        if (redirect != null) {
-                            val finalUrl = if (redirect.contains("link=")) redirect.substringAfter("link=") else redirect
-                            println("$tag FINAL URL: $finalUrl")
-                            callback(newExtractorLink(sourceTag, "$sourceTag FSLv2 $header [$size]", finalUrl, ExtractorLinkType.VIDEO, quality))
-                        } else {
-                            println("$tag WARN: No redirect location header found")
+                if (dlink.isBlank()) return@forEach
+
+                when {
+                    text.contains("FSLv2", ignoreCase = true) -> {
+                        // FSLv2: follow the vcloud.zip/re.php redirect to get the signed R2 URL
+                        println("$tag FSLv2: following redirect for $dlink")
+                        try {
+                            val res = app.get(getProxiedUrl(dlink), allowRedirects = false)
+                            val redirect = res.headers["location"] ?: res.headers["Location"]
+                            println("$tag FSLv2 redirect HTTP ${res.code} location='$redirect'")
+                            if (redirect != null) {
+                                val finalUrl = if (redirect.contains("link=")) redirect.substringAfter("link=") else redirect
+                                println("$tag FSLv2 FINAL URL: $finalUrl")
+                                callback(newExtractorLink(sourceTag, "$sourceTag [Hub-Cloud[FSLv2 Server]] $header [$size]", finalUrl, ExtractorLinkType.VIDEO, quality))
+                            }
+                        } catch (e: Exception) {
+                            println("$tag FSLv2 redirect FAILED: ${e.message}")
                         }
-                    } catch(e: Exception) {
-                        println("$tag Redirect follow FAILED: ${e.message}")
                     }
-                } else {
-                    println("$tag Skipping btn '$text' (not FSLv2)")
+                    text.contains("FSL Server", ignoreCase = true) -> {
+                        // FSL: pass directly, let the proxy/player handle it
+                        println("$tag FSL: passing direct link $dlink")
+                        callback(newExtractorLink(sourceTag, "$sourceTag [Hub-Cloud[FSL Server]] $header [$size]", dlink, ExtractorLinkType.VIDEO, quality))
+                    }
+                    text.contains("10Gbps", ignoreCase = true) -> {
+                        // 10Gbps: follow redirect to get final URL
+                        println("$tag 10Gbps: following redirect for $dlink")
+                        try {
+                            val res = app.get(getProxiedUrl(dlink), allowRedirects = false)
+                            val redirect = res.headers["location"] ?: res.headers["Location"]
+                            println("$tag 10Gbps redirect HTTP ${res.code} location='$redirect'")
+                            if (redirect != null) {
+                                val finalUrl = if (redirect.contains("link=")) redirect.substringAfter("link=") else redirect
+                                println("$tag 10Gbps FINAL URL: $finalUrl")
+                                callback(newExtractorLink(sourceTag, "$sourceTag [Hub-Cloud[10Gbps]] $header [$size]", finalUrl, ExtractorLinkType.VIDEO, quality))
+                            }
+                        } catch (e: Exception) {
+                            println("$tag 10Gbps redirect FAILED: ${e.message}")
+                        }
+                    }
+                    dlink.contains("pixeldra", ignoreCase = true) -> {
+                        val baseUrlLink = try { java.net.URI(dlink).let { "https://${it.host}" } } catch (e: Exception) { "" }
+                        val finalUrl = if (dlink.contains("download", true)) dlink
+                            else "$baseUrlLink/api/file/${dlink.substringAfterLast("/")}?download"
+                        println("$tag Pixeldrain: $finalUrl")
+                        callback(newExtractorLink(sourceTag, "$sourceTag [Hub-Cloud[Pixeldrain]] $header [$size]", finalUrl, ExtractorLinkType.VIDEO, quality))
+                    }
+                    else -> println("$tag Skipping btn '$text'")
                 }
             }
 
