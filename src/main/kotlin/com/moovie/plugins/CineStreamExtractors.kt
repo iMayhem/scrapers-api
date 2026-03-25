@@ -205,16 +205,7 @@ object CineStreamExtractors {
                                 callback(resolvedLink.copy(name = "RogMovies ${resolvedLink.name.replace("RogMovies ", "")}"))
                             }
                         } else {
-                            println("$tag [MOVIE] Direct link callback: $sourceUrl")
-                            callback(
-                                newExtractorLink(
-                                    source = "RogMovies",
-                                    name = "RogMovies $sourceText",
-                                    url = sourceUrl,
-                                    quality = getIndexQuality(sourceText),
-                                    type = ExtractorLinkType.VIDEO
-                                )
-                            )
+                            println("$tag [MOVIE] SKIP (not vcloud/fastdl): $sourceUrl")
                         }
                     }
                 }
@@ -279,16 +270,7 @@ object CineStreamExtractors {
                                     callback(resolvedLink.copy(name = "RogMovies S$season E$episode ${resolvedLink.name.replace("RogMovies ", "")}"))
                                 }
                             } else {
-                                println("$tag [TV] Direct link callback: $finalLink")
-                                callback(
-                                    newExtractorLink(
-                                        source = "RogMovies",
-                                        name = "RogMovies S$season E$episode",
-                                        url = finalLink,
-                                        quality = Qualities.P1080.value,
-                                        type = ExtractorLinkType.VIDEO
-                                    )
-                                )
+                                println("$tag [TV] SKIP (not vcloud/fastdl): $finalLink")
                             }
                         }
                     }
@@ -1027,9 +1009,9 @@ object CineStreamExtractors {
                 val dlink = btn.attr("href")
                 val text = btn.text()
                 println("$tag Checking btn '$text' -> '$dlink'")
-                if (text.contains("10Gbps", ignoreCase=true) || text.contains("FSL", ignoreCase=true) || text.contains("Download FSLv2", ignoreCase=true)) {
-                    val serverName = if (text.contains("10Gbps", true)) "HD 10Gbps" else if (text.contains("FSLv2", true)) "FSLv2" else "FSL"
-                    println("$tag Matched server '$serverName', following redirect for: $dlink")
+                // Only FSLv2 and FastDL produce reliable direct links — skip FSL and 10Gbps
+                if (text.contains("FSLv2", ignoreCase=true) || text.contains("Download FSLv2", ignoreCase=true)) {
+                    println("$tag Matched server 'FSLv2', following redirect for: $dlink")
                     try {
                         val res = app.get(getProxiedUrl(dlink), allowRedirects = false)
                         println("$tag Redirect response HTTP ${res.code}")
@@ -1040,7 +1022,7 @@ object CineStreamExtractors {
                         if (redirect != null) {
                             val finalUrl = if (redirect.contains("link=")) redirect.substringAfter("link=") else redirect
                             println("$tag FINAL URL: $finalUrl")
-                            callback(newExtractorLink(sourceTag, "$sourceTag $serverName $header [$size]", finalUrl, ExtractorLinkType.VIDEO, quality))
+                            callback(newExtractorLink(sourceTag, "$sourceTag FSLv2 $header [$size]", finalUrl, ExtractorLinkType.VIDEO, quality))
                         } else {
                             println("$tag WARN: No redirect location header found")
                         }
@@ -1048,7 +1030,7 @@ object CineStreamExtractors {
                         println("$tag Redirect follow FAILED: ${e.message}")
                     }
                 } else {
-                    println("$tag Skipping btn '$text' (not FSL/10Gbps)")
+                    println("$tag Skipping btn '$text' (not FSLv2)")
                 }
             }
 
