@@ -532,9 +532,6 @@ fun Application.configureRouting() {
                   call.respond(HttpStatusCode.Gone, "Token expired")
                   return@get
               }
-              // Validate IP binding — reject if request comes from a different IP
-              val requestIp = call.request.headers["CF-Connecting-IP"] ?: call.request.headers["X-Forwarded-For"]?.split(",")?.first()?.trim()
-                  ?: call.request.local.remoteHost
               targetUrl = tokenData.url
               headersJsonRaw = tokenData.headersJson
           } catch (e: Exception) {
@@ -560,6 +557,12 @@ fun Application.configureRouting() {
           } catch(e: Exception) {
               println("Failed parsing headers for proxy: ${e.message}")
           }
+      }
+      
+      // Filepress / Filebee explicitly requires origin and referer to match their domain or they return 403 Forbidden
+      if (targetUrl.contains("filebee.xyz", ignoreCase = true) || targetUrl.contains("filepress", ignoreCase = true)) {
+          reqBuilder.header("Origin", "https://filebee.xyz")
+          reqBuilder.header("Referer", "https://filebee.xyz/")
       }
       
       try {
@@ -596,6 +599,14 @@ fun Application.configureRouting() {
       } catch (e: Exception) {
           call.respond(HttpStatusCode.InternalServerError, "Proxy Connection Error: ${e.message}")
       }
+    }
+
+    options("/api/proxy") {
+        call.response.headers.append(HttpHeaders.AccessControlAllowOrigin, "*")
+        call.response.headers.append(HttpHeaders.AccessControlAllowMethods, "GET, HEAD, OPTIONS")
+        call.response.headers.append(HttpHeaders.AccessControlAllowHeaders, "*")
+        call.response.headers.append(HttpHeaders.AccessControlMaxAge, "86400")
+        call.respond(HttpStatusCode.OK)
     }
   }
 }
