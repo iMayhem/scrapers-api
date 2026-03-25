@@ -62,7 +62,8 @@ data class ExtractorLink(
     val isM3u8: Boolean = false,
     var headers: Map<String, String> = emptyMap(),
     val type: ExtractorLinkType = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO,
-    var extractorData: String? = null
+    var extractorData: String? = null,
+    var fileSizeGb: Double? = null
 )
 
 data class SubtitleFile(

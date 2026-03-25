@@ -270,10 +270,14 @@ fun Application.configureRouting() {
 
 
       fun parseFileSizeGb(server: String): Double? {
-        val gbMatch = Regex("""(\d+\.?\d*)\s*GB""", RegexOption.IGNORE_CASE).find(server)
-        if (gbMatch != null) return gbMatch.groupValues[1].toDoubleOrNull()
-        val mbMatch = Regex("""(\d+\.?\d*)\s*MB""", RegexOption.IGNORE_CASE).find(server)
-        if (mbMatch != null) return mbMatch.groupValues[1].toDoubleOrNull()?.div(1024.0)
+        // Match numbers like 1,2 or 1.2
+        val sizeVal = """(\d+(?:[.,]\d+)?)""" 
+        val gbMatch = Regex("$sizeVal\\s*GB", RegexOption.IGNORE_CASE).find(server)
+        if (gbMatch != null) return gbMatch.groupValues[1].replace(',', '.').toDoubleOrNull()
+        
+        val mbMatch = Regex("$sizeVal\\s*MB", RegexOption.IGNORE_CASE).find(server)
+        if (mbMatch != null) return mbMatch.groupValues[1].replace(',', '.').toDoubleOrNull()?.div(1024.0)
+        
         return null
       }
 
@@ -288,17 +292,14 @@ fun Application.configureRouting() {
               latencyMs: Long? = null,
               providerKey: String? = null,
               fileSizeGb: Double? = null,
-      ): JSONObject {
-        return JSONObject().apply {
-          put("server", server)
-          put("url", url)
-          put("quality", quality)
-          put("type", type)
-          if (headers != null) put("headers", JSONObject(headers))
-          if (latencyMs != null) put("latencyMs", latencyMs)
-          if (providerKey != null) put("providerKey", providerKey)
-          if (fileSizeGb != null) put("fileSizeGb", fileSizeGb)
         }
+      }
+
+      fun createSubtitleObj(lang: String, url: String): JSONObject {
+          return JSONObject().apply {
+              put("lang", lang)
+              put("url", url)
+          }
       }
 
       suspend fun addStream(
@@ -308,13 +309,14 @@ fun Application.configureRouting() {
               quality: String = "Auto",
               headers: Map<String, String>? = null,
               providerKey: String? = null,
+              fileSizeGb: Double? = null,
       ) {
         if (url.isBlank()) return
         val latencyMs =
                 if (type in listOf("hls", "mp4", "dash")) {
                   withContext(Dispatchers.IO) { measurePing(client, url, headers) }
                 } else null
-        val fileSizeGb = parseFileSizeGb(server)
+        val finalFileSizeGb = fileSizeGb ?: parseFileSizeGb(server)
         val obj =
                 createStreamObj(
                         server,
@@ -324,7 +326,7 @@ fun Application.configureRouting() {
                         headers,
                         latencyMs,
                         providerKey,
-                        fileSizeGb
+                        finalFileSizeGb
                 )
         streamsList.add(obj)
         emit("stream", obj)
@@ -345,8 +347,9 @@ fun Application.configureRouting() {
                                       year = year,
                                       season = season?.toIntOrNull(),
                                       episode = episode?.toIntOrNull(),
-                                      subtitleCallback = { _ ->
-                                      }, // We can handle subtitles if needed later
+                                      subtitleCallback = { sub ->
+                                          launch { emit("subtitle", createSubtitleObj(sub.lang, sub.url)) }
+                                      },
                                       callback = { link ->
                                         val st =
                                                 when (link.type) {
@@ -363,7 +366,8 @@ fun Application.configureRouting() {
                                                   st,
                                                   link.quality.toString(),
                                                   link.headers,
-                                                  "p_moviebox"
+                                                  "p_moviebox",
+                                                  link.fileSizeGb
                                           )
                                         }
                                       }
@@ -389,7 +393,7 @@ fun Application.configureRouting() {
                                          imdbId = imdbId,
                                          season = season?.toIntOrNull(),
                                          episode = episode?.toIntOrNull(),
-                                         subtitleCallback = { _ -> },
+                                         subtitleCallback = { sub -> launch { emit("subtitle", createSubtitleObj(sub.lang, sub.url)) } },
                                          callback = { link ->
                                            launch {
                                              println("[SCRAPE] RogMovies stream found: name='${link.name}' url='${link.url}' quality=${link.quality}")
@@ -399,7 +403,7 @@ fun Application.configureRouting() {
                                                      type = if (link.isM3u8 || link.url.contains(".m3u8")) "hls" else "mp4",
                                                      quality = if (link.quality > 0) "${link.quality}p" else "Auto",
                                                      headers = link.headers,
-                                                     providerKey = "RogMovies"
+                                                     providerKey = "RogMovies", fileSizeGb = link.fileSizeGb
                                              )
                                            }
                                          }
@@ -434,7 +438,8 @@ fun Application.configureRouting() {
                                                       type = if (link.isM3u8 || link.url.contains(".m3u8")) "hls" else "mp4",
                                                       quality = if (link.quality > 0) "${link.quality}p" else "Auto",
                                                       headers = link.headers,
-                                                      providerKey = "MoviesDrive"
+                                                      providerKey = "MoviesDrive",
+                                                      fileSizeGb = link.fileSizeGb
                                               )
                                             }
                                           }
