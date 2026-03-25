@@ -373,35 +373,9 @@ fun Application.configureRouting() {
                           }
                   )
 
-                  tasks.add(
-                          async {
-                              try {
-                                  if (!imdbId.isNullOrBlank()) {
-                                      CineStreamExtractors.invokeAllmovieland(
-                                              id = imdbId,
-                                              title = mediaTitle,
-                                              year = year,
-                                              season = season?.toIntOrNull(),
-                                              episode = episode?.toIntOrNull(),
-                                              callback = { link ->
-                                                  val st = if (link.isM3u8 || link.url.contains(".m3u8")) "hls" else "mp4"
-                                                  launch {
-                                                      addStream(
-                                                              link.name.ifBlank { "AllMoviesLand" },
-                                                              link.url,
-                                                              st,
-                                                              link.quality.toString(),
-                                                              link.headers,
-                                                              "p_allmovieland"
-                                                      )
-                                                  }
-                                              }
-                                      )
-                                  }
-                              } catch (e: Exception) {
-                              }
-                          }
-                  )
+                  // AllMoviesLand — geo-restricted (India only), disabled until India-based proxy available
+                  // tasks.add(async { ... })
+
  
                    // RogMovies
                    tasks.add(

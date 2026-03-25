@@ -696,7 +696,35 @@ data class TripleOneMoviesServer(
 )
 
 // ═══════════════════════════════════════════════
-// 7. ROGMOVIES MODELS
+// 8. ALLMOVIELAND MODELS
+// ═══════════════════════════════════════════════
+
+data class AllMovielandPlaylist(
+    val file: String? = null,
+    val key: String? = null
+)
+
+data class AllMovielandServer(
+    val title: String? = null,
+    val id: String? = null,
+    val file: String? = null,
+    val folder: ArrayList<AllMovielandSeasonFolder>? = arrayListOf()
+) {
+    data class AllMovielandSeasonFolder(
+        val episode: String? = null,
+        val id: String? = null,
+        val folder: ArrayList<AllMovielandEpisodeFolder>? = arrayListOf()
+    ) {
+        data class AllMovielandEpisodeFolder(
+            val title: String? = null,
+            val id: String? = null,
+            val file: String? = null
+        )
+    }
+}
+
+// ═══════════════════════════════════════════════
+// 9. ROGMOVIES MODELS
 // ═══════════════════════════════════════════════
 
 data class VegaSearchResponse(

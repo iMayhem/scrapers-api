@@ -529,103 +529,108 @@ object CineStreamExtractors {
         callback: (ExtractorLink) -> Unit
     ) {
         if (id == null) return
-        val amlHost = "https://allmovieland.you"
-        val playUrl = if (season == null) "$amlHost/movie/$id" else "$amlHost/tv/$id"
-        val referer = "$amlHost/"
+
+        // Dynamically resolve the actual stream host from player.js
+        val playerScript = try {
+            app.get("https://allmovieland.link/player.js?v=60%20128").text
+        } catch (e: Exception) {
+            println("[AML] Failed to fetch player.js: ${e.message}")
+            return
+        }
+        val host = Regex("const AwsIndStreamDomain.*'(.*)'").find(playerScript)
+            ?.groupValues?.getOrNull(1)
+        if (host.isNullOrBlank()) {
+            println("[AML] Could not extract AwsIndStreamDomain. player.js preview: ${playerScript.take(300)}")
+            return
+        }
+        println("[AML] host=$host")
+
+        val referer = "https://allmovieland.you/"
+
+        // Establish a session by hitting the host root first (gets cookies)
+        try {
+            app.get(host, headers = mapOf("User-Agent" to USER_AGENT))
+        } catch (e: Exception) {
+            println("[AML] Session init failed (non-fatal): ${e.message}")
+        }
 
         val res = try {
-            val doc = app.get(playUrl, referer = referer).document
-            
-            // Metadata Verification for AllMoviesLand (loosen to search whole page)
-            val pageTitle = doc.select("h1, .video-title").text().lowercase()
-            val fullText = doc.body().text().lowercase()
-            val normReq = normalize(title ?: "")
-
-            if (normReq.isNotEmpty() && !normalize(pageTitle).contains(normReq) && !normalize(fullText).contains(normReq)) return
-            if (year != null && !pageTitle.contains(year) && !fullText.contains(year)) return
-
-            val script = doc.selectFirst("script:containsData(\"file\":)")
-            if (script == null) {
-                val altScript = doc.select("script").find { it.data().contains("\"file\":") }
-                altScript?.data()
-                    ?.substringAfter("{")
-                    ?.substringBeforeLast("}")
-            } else {
-                script.data()
-                    ?.substringAfter("{")
-                    ?.substringBeforeLast("}")
-            }
+            val resp = app.get(
+                "$host/play/$id",
+                referer = referer,
+                headers = mapOf("User-Agent" to USER_AGENT)
+            )
+            println("[AML] /play/$id HTTP ${resp.code} len=${resp.text.length}")
+            println("[AML] Body preview: ${resp.text.take(500)}")
+            resp.document
+                .selectFirst("script:containsData(playlist)")
+                ?.data()
+                ?.substringAfter("{")
+                ?.substringBefore(";")
+                ?.substringBefore(")")
         } catch (e: Exception) {
-            println("[AML] Extraction failed: ${e.message}")
+            println("[AML] /play/$id fetch failed: ${e.message}")
             null
         }
-        
-        if (res == null) return
-        
-        val json = try { JSONObject("{$res}") } catch (e: Exception) {
-            println("[AML] JSON parse failed: ${e.message}")
+
+        if (res == null) {
+            println("[AML] No playlist script found")
             return
         }
-        val key = json.optString("key")
-        val fileUri = json.optString("file")
+
+        val json = tryParseJson<AllMovielandPlaylist>("{$res}")
+        val key = json?.key
+        val fileUri = json?.file
         println("[AML] key=$key fileUri=$fileUri")
 
-     println("[AML] key=$key fileUri=$fileUri")
-        if (key.isBlank() || fileUri.isBlank()) {
-            println("[AML] Missing key or fileUri.")
+        if (key.isNullOrBlank() || fileUri.isNullOrBlank()) {
+            println("[AML] Missing key or file")
             return
         }
-        
+
         val headers = mapOf("X-CSRF-TOKEN" to key, "Referer" to referer)
+        val fileUrl = if (fileUri.startsWith("http")) fileUri else "$host$fileUri"
+        println("[AML] Fetching server list: $fileUrl")
 
         val serverRes = try {
-            val fileUrl = if (fileUri.startsWith("http")) fileUri else if (fileUri.startsWith("/")) "$amlHost$fileUri" else "$amlHost/$fileUri"
-            app.get(fileUrl, headers = headers, referer = referer)
-                .text
-                .replace(Regex(""",\s*\[]"""), "")
-        } catch (e: Exception) { return }
-
-        val arr = try { JSONArray(serverRes) } catch (e: Exception) { return }
-        val servers = mutableListOf<Pair<String, String>>()
-
-        if (season == null) {
-            for (i in 0 until arr.length()) {
-                val obj = arr.optJSONObject(i) ?: continue
-                val file = obj.optString("file")
-                val title = obj.optString("title")
-                if (file.isNotEmpty() && title.isNotEmpty()) servers.add(Pair(file, title))
-            }
-        } else {
-            for (i in 0 until arr.length()) {
-                val sObj = arr.optJSONObject(i) ?: continue
-                if (sObj.optString("id") == season.toString()) {
-                    val eps = sObj.optJSONArray("folder") ?: continue
-                    for (j in 0 until eps.length()) {
-                        val eObj = eps.optJSONObject(j) ?: continue
-                        if (eObj.optString("episode") == episode.toString()) {
-                            val streams = eObj.optJSONArray("folder") ?: continue
-                            for (k in 0 until streams.length()) {
-                                val strObj = streams.optJSONObject(k) ?: continue
-                                val file = strObj.optString("file")
-                                val title = strObj.optString("title")
-                                if (file.isNotEmpty() && title.isNotEmpty()) servers.add(Pair(file, title))
-                            }
-                            break
-                        }
-                    }
-                    break
-                }
-            }
+            val resp = app.get(fileUrl, headers = headers, referer = referer)
+            println("[AML] Server list HTTP ${resp.code} preview: ${resp.text.take(200)}")
+            resp.text.replace(Regex(""",\s*\[]"""), "")
+        } catch (e: Exception) {
+            println("[AML] Server list fetch failed: ${e.message}")
+            return
         }
 
+        val servers: List<Pair<String?, String?>> = tryParseJson<ArrayList<AllMovielandServer>>(serverRes)?.let { server ->
+            if (season == null) {
+                server.map { it.file to it.title }
+            } else {
+                server.find { it.id == "$season" }
+                    ?.folder?.find { it.episode == "$episode" }
+                    ?.folder?.map { it.file to it.title }
+            }
+        } ?: run {
+            println("[AML] Failed to parse server list")
+            return
+        }
+
+        println("[AML] Found ${servers.size} server(s)")
+
         servers.safeAmap { (server, lang) ->
+            if (server.isNullOrBlank()) return@safeAmap null
+            println("[AML] Fetching playlist for server=$server lang=$lang")
             val path = try {
-                app.post(
-                    "${amlHost}/playlist/${server}.txt",
+                val resp = app.post(
+                    "$host/playlist/$server.txt",
                     headers = headers,
                     referer = referer
-                ).text
-            } catch (e: Exception) { return@safeAmap null }
+                )
+                println("[AML] Playlist HTTP ${resp.code} body='${resp.text.take(100)}'")
+                resp.text
+            } catch (e: Exception) {
+                println("[AML] Playlist fetch failed: ${e.message}")
+                return@safeAmap null
+            }
 
             if (path.isNotBlank()) {
                 callback.invoke(
@@ -826,7 +831,17 @@ object CineStreamExtractors {
         callback: (ExtractorLink) -> Unit
     ) {
         if (imdbId == null) return
-        val moviesdriveAPI = "https://moviesdrive.forum"
+
+        // Fetch the current domain dynamically (same as CSX app)
+        val moviesdriveAPI = try {
+            val json = app.get("https://raw.githubusercontent.com/SaurabhKaperwan/Utils/refs/heads/main/urls.json").text
+            tryParseJson<org.json.JSONObject>(json)?.optString("moviesdrive")?.takeIf { it.isNotBlank() }
+                ?: "https://new1.moviesdrives.my"
+        } catch (e: Exception) {
+            println("[MD] Failed to fetch dynamic URL, using fallback: ${e.message}")
+            "https://new1.moviesdrives.my"
+        }
+        println("[MD] Using domain: $moviesdriveAPI")
         
         // 1. Search by IMDb ID
         val searchUrl = getProxiedUrl("$moviesdriveAPI/searchapi.php?q=$imdbId")
