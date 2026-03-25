@@ -507,10 +507,10 @@ fun Application.configureRouting() {
           
           if (response.code == 206 || response.code == 200) {
               call.response.status(HttpStatusCode.fromValue(response.code))
-              call.response.header(HttpHeaders.ContentType, contentType)
-              response.header("Content-Range")?.let { call.response.header(HttpHeaders.ContentRange, it) }
-              response.header("Content-Length")?.let { call.response.header(HttpHeaders.ContentLength, it) }
-              call.response.header(HttpHeaders.AccessControlAllowOrigin, "*")
+              call.response.headers.append(HttpHeaders.ContentType, contentType)
+              response.header("Content-Range")?.let { call.response.headers.append(HttpHeaders.ContentRange, it) }
+              response.header("Content-Length")?.let { call.response.headers.append(HttpHeaders.ContentLength, it) }
+              call.response.headers.append(HttpHeaders.AccessControlAllowOrigin, "*")
               
               call.respondOutputStream {
                   response.body?.byteStream()?.copyTo(this)
