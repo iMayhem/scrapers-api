@@ -21,8 +21,14 @@ object CineStreamExtractors {
         return if (url.startsWith('/')) "$domain$url" else "$domain/$url"
     }
 
+    private fun normalize(s: String): String {
+        return s.lowercase().replace(Regex("[^a-z0-9]"), "")
+    }
+
     suspend fun invokeRogmovies(
         imdbId: String? = null,
+        title: String? = null,
+        year: String? = null,
         season: Int? = null,
         episode: Int? = null,
         subtitleCallback: (SubtitleFile) -> Unit,
@@ -47,11 +53,18 @@ object CineStreamExtractors {
             val proxiedPageUrl = getProxiedUrl(pageUrl)
             val doc = try { app.get(proxiedPageUrl).document } catch (e: Exception) { return@safeAmap }
             
-            // Verify IMDb ID on the page
+            // Verify IMDb ID on the page - STRICT CHECK
             val foundImdbId = doc.select("a[href*=\"imdb.com/title/\"]").attr("href")
                 .substringAfter("title/").substringBefore("/")
             
-            if (foundImdbId != imdbId && !doc.body().text().contains(imdbId)) return@safeAmap
+            // Title/Year Verification to avoid sequels/wrong versions
+            val pageTitle = doc.title().lowercase()
+            val requestedTitle = title?.lowercase() ?: ""
+            val normPage = normalize(pageTitle)
+            val normReq = normalize(requestedTitle)
+            
+            if (normReq.isNotEmpty() && !normPage.contains(normReq)) return@safeAmap
+            if (year != null && !pageTitle.contains(year)) return@safeAmap
 
             if (season == null) {
                 // MOVIE LOGIC
@@ -67,7 +80,7 @@ object CineStreamExtractors {
                     
                     // Visit the intermediate link to find the actual file/embed links
                     val downloadDoc = try { app.get(getProxiedUrl(absoluteLink)).document } catch (e: Exception) { return@safeAmap }
-                    downloadDoc.select("p > a, .download-links a, a.btn").safeAmap { source ->
+                    downloadDoc.select("p > a, .download-links a, a.btn, .links a, .dwn-link a").safeAmap { source ->
                         val sourceUrl = source.attr("href")
                         val sourceText = source.text()
                         if (sourceUrl.isNotBlank() && !sourceUrl.contains("telegram", true)) {
@@ -284,6 +297,7 @@ object CineStreamExtractors {
                 }
             }
             .sortedByDescending { it.totalScore }
+            .filter { it.totalScore > 0 || (it.titleScore >= 300 && it.releaseYear == null) }
             .distinctBy { it.id }
 
         // 4. Detail & Link Extraction
@@ -370,6 +384,8 @@ object CineStreamExtractors {
 
     suspend fun invokeAllmovieland(
         id: String? = null,
+        title: String? = null,
+        year: String? = null,
         season: Int? = null,
         episode: Int? = null,
         callback: (ExtractorLink) -> Unit
@@ -381,6 +397,16 @@ object CineStreamExtractors {
 
         val res = try {
             val doc = app.get(playUrl, referer = referer).document
+            
+            // Metadata Verification for AllMoviesLand (avoid fake/upcoming placeholder posts)
+            val pageTitle = doc.select("h1, .video-title").text().lowercase()
+            val requestedTitle = title?.lowercase() ?: ""
+            val normPage = normalize(pageTitle)
+            val normReq = normalize(requestedTitle)
+
+            if (normReq.isNotEmpty() && !normPage.contains(normReq)) return
+            if (year != null && !pageTitle.contains(year)) return
+
             val script = doc.selectFirst("script:containsData(\"file\":)")
             if (script == null) {
                 val altScript = doc.select("script").find { it.data().contains("\"file\":") }

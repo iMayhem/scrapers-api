@@ -379,6 +379,8 @@ fun Application.configureRouting() {
                                   if (!imdbId.isNullOrBlank()) {
                                       CineStreamExtractors.invokeAllmovieland(
                                               id = imdbId,
+                                              title = mediaTitle,
+                                              year = year,
                                               season = season?.toIntOrNull(),
                                               episode = episode?.toIntOrNull(),
                                               callback = { link ->
@@ -407,6 +409,8 @@ fun Application.configureRouting() {
                              try {
                                if (!imdbId.isNullOrBlank()) {
                                  CineStreamExtractors.invokeRogmovies(
+                                          title = mediaTitle,
+                                          year = year,
                                          imdbId = imdbId,
                                          season = season?.toIntOrNull(),
                                          episode = episode?.toIntOrNull(),
