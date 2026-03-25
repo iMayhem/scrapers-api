@@ -408,6 +408,7 @@ fun Application.configureRouting() {
                            async {
                              try {
                                if (!imdbId.isNullOrBlank()) {
+                                 println("[SCRAPE] RogMovies starting: imdbId=$imdbId title=$mediaTitle year=$year season=$season episode=$episode")
                                  CineStreamExtractors.invokeRogmovies(
                                           title = mediaTitle,
                                           year = year,
@@ -417,6 +418,7 @@ fun Application.configureRouting() {
                                          subtitleCallback = { _ -> },
                                          callback = { link ->
                                            launch {
+                                             println("[SCRAPE] RogMovies stream found: name='${link.name}' url='${link.url}' quality=${link.quality}")
                                              addStream(
                                                      server = link.name,
                                                      url = link.url,
@@ -428,9 +430,13 @@ fun Application.configureRouting() {
                                            }
                                          }
                                  )
+                                 println("[SCRAPE] RogMovies finished")
+                               } else {
+                                 println("[SCRAPE] RogMovies SKIP: imdbId is blank")
                                }
                              } catch (e: Exception) {
-                               println("[SCRAPE] RogMovies failed: ${e.message}")
+                               println("[SCRAPE] RogMovies EXCEPTION: ${e::class.simpleName}: ${e.message}")
+                               e.printStackTrace()
                              }
                            }
                    )

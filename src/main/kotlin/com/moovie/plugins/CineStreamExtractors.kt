@@ -34,109 +34,226 @@ object CineStreamExtractors {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        if (imdbId == null) return
+        val tag = "[RogMovies]"
+        println("$tag START imdbId=$imdbId title=$title year=$year season=$season episode=$episode")
+
+        if (imdbId == null) {
+            println("$tag ABORT: imdbId is null")
+            return
+        }
         val rogmoviesAPI = "https://rogmovies.vip"
         
         // 1. Search by IMDb ID
-        val searchUrl = getProxiedUrl("$rogmoviesAPI/search.php?q=$imdbId&page=1")
-        val json = try { app.get(searchUrl).text } catch (e: Exception) { return }
+        val rawSearchUrl = "$rogmoviesAPI/search.php?q=$imdbId&page=1"
+        val searchUrl = getProxiedUrl(rawSearchUrl)
+        println("$tag Searching: $rawSearchUrl (proxied)")
+
+        val json = try {
+            val resp = app.get(searchUrl)
+            println("$tag Search HTTP ${resp.code} body_len=${resp.text.length}")
+            resp.text
+        } catch (e: Exception) {
+            println("$tag Search FAILED: ${e.message}")
+            return
+        }
+
+        println("$tag Search raw JSON (first 500): ${json.take(500)}")
         
-        val searchResponse = tryParseJson<VegaSearchResponse>(json) ?: return
+        val searchResponse = tryParseJson<VegaSearchResponse>(json)
+        if (searchResponse == null) {
+            println("$tag ABORT: Failed to parse VegaSearchResponse. Raw: ${json.take(300)}")
+            return
+        }
+        println("$tag Search hits count: ${searchResponse.hits.size}")
+
         val movieUrls = searchResponse.hits.map { hit ->
+            println("$tag  hit: id=${hit.document.id} imdb=${hit.document.imdb_id} title=${hit.document.post_title} permalink=${hit.document.permalink}")
             fixUrl(hit.document.permalink, rogmoviesAPI)
         }
 
-        if (movieUrls.isEmpty()) return
+        if (movieUrls.isEmpty()) {
+            println("$tag ABORT: No movie URLs from search results")
+            return
+        }
+        println("$tag Processing ${movieUrls.size} page(s): $movieUrls")
 
-        // 2. Process each result (usually just one for a specific IMDb ID)
+        // 2. Process each result
         movieUrls.safeAmap { pageUrl ->
+            println("$tag Fetching page: $pageUrl")
             val proxiedPageUrl = getProxiedUrl(pageUrl)
-            val doc = try { app.get(proxiedPageUrl).document } catch (e: Exception) { return@safeAmap }
+            val doc = try {
+                val resp = app.get(proxiedPageUrl)
+                println("$tag Page HTTP ${resp.code} for $pageUrl")
+                resp.document
+            } catch (e: Exception) {
+                println("$tag Page fetch FAILED for $pageUrl: ${e.message}")
+                return@safeAmap
+            }
             
-            // Verify IMDb ID on the page - Trust it 100% if found
+            println("$tag Page title: '${doc.title()}'")
+
+            // Verify IMDb ID on the page
             val foundImdbId = doc.select("a[href*=\"imdb.com/title/\"]").attr("href")
                 .substringAfter("title/").substringBefore("/")
+            println("$tag IMDb ID on page: '$foundImdbId' (expected: '$imdbId')")
             
             val idMatch = (foundImdbId == imdbId) || (foundImdbId.isBlank() && doc.body().text().contains(imdbId ?: "---"))
+            println("$tag IMDb ID match: $idMatch (foundBlank=${foundImdbId.isBlank()})")
 
             if (!idMatch) {
-                // Metadata Fallback for RogMovies
                 val pageTitle = doc.title().lowercase()
                 val fullText = doc.body().text().lowercase()
                 val normReq = normalize(title ?: "")
+                println("$tag ID mismatch — falling back to title/year check. normReq='$normReq'")
                 
-                // If title and text don't have the title, it's likely wrong
-                if (normReq.isNotEmpty() && !normalize(pageTitle).contains(normReq) && !normalize(fullText).contains(normReq)) return@safeAmap
-                
-                // If year is specified but nowhere on the page, return early
-                if (year != null && !pageTitle.contains(year) && !fullText.contains(year)) return@safeAmap
+                if (normReq.isNotEmpty() && !normalize(pageTitle).contains(normReq) && !normalize(fullText).contains(normReq)) {
+                    println("$tag SKIP: title '$normReq' not found in page title or body")
+                    return@safeAmap
+                }
+                if (year != null && !pageTitle.contains(year) && !fullText.contains(year)) {
+                    println("$tag SKIP: year '$year' not found in page")
+                    return@safeAmap
+                }
+                println("$tag Fallback match passed for $pageUrl")
             }
 
             if (season == null) {
                 // MOVIE LOGIC
-                // Look for common download/stream button patterns on Vegamovies-like sites
-                doc.select("button.dwd-button, a.btn-download, a.dwd-button, .download-btn").safeAmap { btn ->
+                val downloadBtns = doc.select("button.dwd-button, a.btn-download, a.dwd-button, .download-btn")
+                println("$tag [MOVIE] Found ${downloadBtns.size} download button(s) via selector")
+
+                // Dump all links on page for debugging if no buttons found
+                if (downloadBtns.isEmpty()) {
+                    val allLinks = doc.select("a[href]").map { "${it.text().trim()} -> ${it.attr("href")}" }
+                    println("$tag [MOVIE] No download buttons found. All page links (${allLinks.size}):")
+                    allLinks.take(40).forEach { println("$tag   $it") }
+                }
+
+                downloadBtns.safeAmap { btn ->
                     var link = btn.parent()?.attr("href") ?: btn.attr("href")
+                    println("$tag [MOVIE] Button text='${btn.text()}' raw_link='$link'")
                     if (link.isNullOrBlank() || link == "#") {
-                        // Sometimes the button itself has the data or it's a sibling
                         link = btn.select("a").attr("href").takeIf { it.isNotBlank() } ?: ""
+                        println("$tag [MOVIE] Resolved inner link: '$link'")
                     }
-                    if (link.isBlank()) return@safeAmap
+                    if (link.isBlank()) {
+                        println("$tag [MOVIE] SKIP: blank link for button '${btn.text()}'")
+                        return@safeAmap
+                    }
                     val absoluteLink = fixUrl(link, rogmoviesAPI)
+                    println("$tag [MOVIE] Visiting intermediate page: $absoluteLink")
                     
-                    // Visit the intermediate link to find the actual file/embed links
-                    val downloadDoc = try { app.get(getProxiedUrl(absoluteLink)).document } catch (e: Exception) { return@safeAmap }
-                    downloadDoc.select("p > a, .download-links a, a.btn, .links a, .dwn-link a").safeAmap { source ->
+                    val downloadDoc = try {
+                        val resp = app.get(getProxiedUrl(absoluteLink))
+                        println("$tag [MOVIE] Intermediate page HTTP ${resp.code}")
+                        resp.document
+                    } catch (e: Exception) {
+                        println("$tag [MOVIE] Intermediate page FAILED: ${e.message}")
+                        return@safeAmap
+                    }
+
+                    val sources = downloadDoc.select("p > a, .download-links a, a.btn, .links a, .dwn-link a")
+                    println("$tag [MOVIE] Found ${sources.size} source link(s) on intermediate page")
+                    if (sources.isEmpty()) {
+                        val allLinks = downloadDoc.select("a[href]").map { "${it.text().trim()} -> ${it.attr("href")}" }
+                        println("$tag [MOVIE] No sources matched selector. All links on intermediate page:")
+                        allLinks.take(30).forEach { println("$tag   $it") }
+                    }
+
+                    sources.safeAmap { source ->
                         val sourceUrl = source.attr("href")
                         val sourceText = source.text()
-                        if (sourceUrl.isNotBlank() && !sourceUrl.contains("telegram", true)) {
-                            if (sourceUrl.contains("vcloud", ignoreCase=true) || sourceUrl.contains("hubcloud", ignoreCase=true) || sourceUrl.contains("fastdl", ignoreCase=true)) {
-                                resolveVCloudOrGDFlix(sourceUrl, "RogMovies") { resolvedLink ->
-                                    callback(resolvedLink.copy(name = "RogMovies ${resolvedLink.name.replace("RogMovies ", "")}"))
-                                }
-                            } else {
-                                callback(
-                                    newExtractorLink(
-                                        source = "RogMovies",
-                                        name = "RogMovies $sourceText",
-                                        url = sourceUrl,
-                                        quality = getIndexQuality(sourceText),
-                                        type = ExtractorLinkType.VIDEO
-                                    )
-                                )
+                        println("$tag [MOVIE] Source: text='$sourceText' url='$sourceUrl'")
+                        if (sourceUrl.isBlank()) {
+                            println("$tag [MOVIE] SKIP: blank source URL")
+                            return@safeAmap
+                        }
+                        if (sourceUrl.contains("telegram", true)) {
+                            println("$tag [MOVIE] SKIP: telegram link")
+                            return@safeAmap
+                        }
+                        if (sourceUrl.contains("vcloud", ignoreCase=true) || sourceUrl.contains("hubcloud", ignoreCase=true) || sourceUrl.contains("fastdl", ignoreCase=true)) {
+                            println("$tag [MOVIE] Resolving VCloud/HubCloud: $sourceUrl")
+                            resolveVCloudOrGDFlix(sourceUrl, "RogMovies") { resolvedLink ->
+                                println("$tag [MOVIE] Resolved link: name='${resolvedLink.name}' url='${resolvedLink.url}'")
+                                callback(resolvedLink.copy(name = "RogMovies ${resolvedLink.name.replace("RogMovies ", "")}"))
                             }
+                        } else {
+                            println("$tag [MOVIE] Direct link callback: $sourceUrl")
+                            callback(
+                                newExtractorLink(
+                                    source = "RogMovies",
+                                    name = "RogMovies $sourceText",
+                                    url = sourceUrl,
+                                    quality = getIndexQuality(sourceText),
+                                    type = ExtractorLinkType.VIDEO
+                                )
+                            )
                         }
                     }
                 }
             } else {
                 // TV SHOW LOGIC
-                // Find Season block
                 val seasonText = "Season $season"
+                println("$tag [TV] Looking for season header: '$seasonText'")
                 val seasonHeader = doc.select("h4, h3, p, strong").find { it.text().contains(seasonText, ignoreCase = true) }
                 
-                if (seasonHeader != null) {
-                    // Usually links follow the header
+                if (seasonHeader == null) {
+                    println("$tag [TV] WARN: No season header found for '$seasonText'")
+                    val allHeaders = doc.select("h4, h3, p, strong").map { it.text().trim() }.filter { it.isNotBlank() }
+                    println("$tag [TV] Available headers/text elements (first 30):")
+                    allHeaders.take(30).forEach { println("$tag   '$it'") }
+                } else {
+                    println("$tag [TV] Found season header: '${seasonHeader.text()}'")
                     val container = seasonHeader.parent()
-                    container?.select("a")?.toList()?.filter { 
+                    val containerLinks = container?.select("a")?.toList() ?: emptyList()
+                    println("$tag [TV] Container has ${containerLinks.size} link(s)")
+                    containerLinks.forEach { println("$tag   link: '${it.text()}' -> '${it.attr("href")}'") }
+
+                    val filteredLinks = containerLinks.filter { 
                         val t = it.text().lowercase()
                         t.contains("v-cloud") || t.contains("single") || t.contains("episode") || t.contains("g-direct")
-                    }?.safeAmap { episodeListLink ->
+                    }
+                    println("$tag [TV] Filtered episode list links: ${filteredLinks.size}")
+
+                    filteredLinks.safeAmap { episodeListLink ->
                         val epListUrl = fixUrl(episodeListLink.attr("href"), rogmoviesAPI)
-                        val epDoc = try { app.get(getProxiedUrl(epListUrl)).document } catch (e: Exception) { return@safeAmap }
+                        println("$tag [TV] Fetching episode list: $epListUrl")
+                        val epDoc = try {
+                            val resp = app.get(getProxiedUrl(epListUrl))
+                            println("$tag [TV] Episode list HTTP ${resp.code}")
+                            resp.document
+                        } catch (e: Exception) {
+                            println("$tag [TV] Episode list FAILED: ${e.message}")
+                            return@safeAmap
+                        }
                         
-                        // Find the specific episode
                         val epPattern = java.util.regex.Pattern.compile("(?i)Episode\\s*0*$episode\\b")
+                        println("$tag [TV] Searching for episode pattern: $epPattern")
                         val epElement = epDoc.getElementsMatchingText(epPattern).firstOrNull()
+                        println("$tag [TV] Episode element found: ${epElement != null} text='${epElement?.text()?.take(100)}'")
+
                         val epLink = epElement?.parent()?.select("a")?.firstOrNull { it.text().contains("V-Cloud", true) || it.text().contains("Direct", true) }
                                      ?: epElement?.nextElementSibling()?.select("a")?.firstOrNull { it.text().contains("V-Cloud", true) || it.text().contains("Direct", true) }
+                        println("$tag [TV] Episode link: text='${epLink?.text()}' href='${epLink?.attr("href")}'")
                         
                         val finalLink = epLink?.attr("href")
-                        if (!finalLink.isNullOrBlank()) {
+                        if (finalLink.isNullOrBlank()) {
+                            println("$tag [TV] WARN: No final link found for S${season}E${episode}")
+                            // Dump nearby elements for debugging
+                            epElement?.parent()?.select("a")?.forEach {
+                                println("$tag [TV]   nearby link: '${it.text()}' -> '${it.attr("href")}'")
+                            }
+                        } else {
+                            println("$tag [TV] Final link for S${season}E${episode}: $finalLink")
                             if (finalLink.contains("vcloud", ignoreCase=true) || finalLink.contains("hubcloud", ignoreCase=true) || finalLink.contains("fastdl", ignoreCase=true)) {
+                                println("$tag [TV] Resolving VCloud/HubCloud: $finalLink")
                                 resolveVCloudOrGDFlix(finalLink, "RogMovies") { resolvedLink ->
+                                    println("$tag [TV] Resolved: name='${resolvedLink.name}' url='${resolvedLink.url}'")
                                     callback(resolvedLink.copy(name = "RogMovies S$season E$episode ${resolvedLink.name.replace("RogMovies ", "")}"))
                                 }
                             } else {
+                                println("$tag [TV] Direct link callback: $finalLink")
                                 callback(
                                     newExtractorLink(
                                         source = "RogMovies",
@@ -152,6 +269,7 @@ object CineStreamExtractors {
                 }
             }
         }
+        println("$tag DONE")
     }
 
     private fun getProxyBase(): String? = System.getenv("SCRAPER_PROXY")
@@ -796,62 +914,145 @@ object CineStreamExtractors {
         sourceTag: String,
         callback: (ExtractorLink) -> Unit
     ) {
+        val tag = "[VCloud/$sourceTag]"
+        println("$tag Resolving: $link")
+
         val resolvedUrl = getProxiedUrl(link)
-        val doc = try { app.get(resolvedUrl).document } catch(e:Exception){return}
+        val doc = try {
+            val resp = app.get(resolvedUrl)
+            println("$tag Entry page HTTP ${resp.code} for $link")
+            resp.document
+        } catch(e: Exception) {
+            println("$tag Entry page FAILED: ${e.message}")
+            return
+        }
         
         if (link.contains("hubcloud", ignoreCase=true) || link.contains("vcloud", ignoreCase=true) || link.contains("fastdl", ignoreCase=true)) {
-            var scriptLink = if(link.contains("/video/")) {
-                doc.selectFirst("div.vd > center > a")?.attr("href") ?: ""
+            println("$tag Branch: HubCloud/VCloud/FastDL")
+            val isVideoPath = link.contains("/video/")
+            println("$tag isVideoPath=$isVideoPath")
+
+            var scriptLink = if (isVideoPath) {
+                val sel = doc.selectFirst("div.vd > center > a")?.attr("href") ?: ""
+                println("$tag [/video/] div.vd>center>a = '$sel'")
+                sel
             } else {
                 val scriptTag = doc.select("script:containsData(url)").firstOrNull()?.data() ?: ""
-                Regex("var url = '([^']*)'").find(scriptTag)?.groupValues?.get(1) ?: ""
+                println("$tag Script tag length=${scriptTag.length} preview='${scriptTag.take(200)}'")
+                val extracted = Regex("var url = '([^']*)'").find(scriptTag)?.groupValues?.get(1) ?: ""
+                println("$tag Extracted scriptLink from var url: '$extracted'")
+                extracted
             }
-            if (scriptLink.isBlank()) return
+
+            if (scriptLink.isBlank()) {
+                println("$tag ABORT: scriptLink is blank after extraction")
+                // Dump all scripts for debugging
+                doc.select("script").forEachIndexed { i, s ->
+                    val d = s.data().take(300)
+                    if (d.isNotBlank()) println("$tag   script[$i]: $d")
+                }
+                // Also dump all links
+                doc.select("a[href]").forEach { println("$tag   link: '${it.text()}' -> '${it.attr("href")}'") }
+                return
+            }
+
             if (!scriptLink.startsWith("http")) {
-                scriptLink = "https://" + java.net.URI(link).host + scriptLink
+                val host = try { java.net.URI(link).host } catch (e: Exception) { "" }
+                scriptLink = "https://$host$scriptLink"
+                println("$tag Prepended host, scriptLink now: $scriptLink")
             }
             
-            val innerDoc = try { app.get(getProxiedUrl(scriptLink)).document } catch(e:Exception){return}
+            println("$tag Fetching inner page: $scriptLink")
+            val innerDoc = try {
+                val resp = app.get(getProxiedUrl(scriptLink))
+                println("$tag Inner page HTTP ${resp.code}")
+                resp.document
+            } catch(e: Exception) {
+                println("$tag Inner page FAILED: ${e.message}")
+                return
+            }
+
             val header = innerDoc.select("div.card-header").text()
             val size = innerDoc.select("i#size").text()
             val quality = getIndexQuality(header)
-            
-            innerDoc.select("h2 a.btn, .btn-success, .btn-primary").forEach { btn ->
+            println("$tag Inner page header='$header' size='$size' quality=$quality")
+
+            val btns = innerDoc.select("h2 a.btn, .btn-success, .btn-primary")
+            println("$tag Found ${btns.size} button(s) on inner page")
+            btns.forEach { println("$tag   btn: '${it.text()}' href='${it.attr("href")}'") }
+
+            btns.forEach { btn ->
                 val dlink = btn.attr("href")
                 val text = btn.text()
+                println("$tag Checking btn '$text' -> '$dlink'")
                 if (text.contains("10Gbps", ignoreCase=true) || text.contains("FSL", ignoreCase=true) || text.contains("Download FSLv2", ignoreCase=true)) {
-                    val serverName = if (text.contains("10Gbps", true)) "HD 10Gbps" else if(text.contains("FSLv2", true)) "FSLv2" else "FSL"
+                    val serverName = if (text.contains("10Gbps", true)) "HD 10Gbps" else if (text.contains("FSLv2", true)) "FSLv2" else "FSL"
+                    println("$tag Matched server '$serverName', following redirect for: $dlink")
                     try {
                         val res = app.get(getProxiedUrl(dlink), allowRedirects = false)
+                        println("$tag Redirect response HTTP ${res.code}")
+                        val allHeaders = res.headers.toMap()
+                        println("$tag Response headers: $allHeaders")
                         val redirect = res.headers["location"] ?: res.headers["Location"]
+                        println("$tag Redirect location: '$redirect'")
                         if (redirect != null) {
-                            val finalUrl = if(redirect.contains("link=")) redirect.substringAfter("link=") else redirect
+                            val finalUrl = if (redirect.contains("link=")) redirect.substringAfter("link=") else redirect
+                            println("$tag FINAL URL: $finalUrl")
                             callback(newExtractorLink(sourceTag, "$sourceTag $serverName $header [$size]", finalUrl, ExtractorLinkType.VIDEO, quality))
+                        } else {
+                            println("$tag WARN: No redirect location header found")
                         }
-                    } catch(e:Exception){}
+                    } catch(e: Exception) {
+                        println("$tag Redirect follow FAILED: ${e.message}")
+                    }
+                } else {
+                    println("$tag Skipping btn '$text' (not FSL/10Gbps)")
                 }
             }
+
+            if (btns.isEmpty()) {
+                println("$tag WARN: No buttons found. Dumping inner page body (first 1000):")
+                println(innerDoc.body().text().take(1000))
+            }
+
         } else if (link.contains("gdflix", ignoreCase=true) || link.contains("gdlink", ignoreCase=true)) {
+            println("$tag Branch: GDFlix/GDLink")
             val fileName = doc.select("ul > li.list-group-item:contains(Name)").text().substringAfter("Name : ")
             val fileSize = doc.select("ul > li.list-group-item:contains(Size)").text().substringAfter("Size : ")
             val quality = getIndexQuality(fileName)
+            println("$tag fileName='$fileName' fileSize='$fileSize' quality=$quality")
             
-            doc.select("div.text-center a").forEach { anchor ->
-                val text = anchor.select("a").text()
+            val anchors = doc.select("div.text-center a")
+            println("$tag Found ${anchors.size} anchor(s) in div.text-center")
+            anchors.forEach { println("$tag   anchor: '${it.text()}' -> '${it.attr("href")}'") }
+
+            anchors.forEach { anchor ->
+                val text = anchor.select("a").text().ifBlank { anchor.text() }
                 val aLink = anchor.attr("href")
+                println("$tag GDFlix anchor text='$text' href='$aLink'")
                 if (text.contains("DIRECT DL", ignoreCase=true) || text.contains("DIRECT SERVER", ignoreCase=true)) {
+                    println("$tag GDFlix DIRECT callback: $aLink")
                     callback(newExtractorLink(sourceTag, "$sourceTag GDFlix $fileName [$fileSize]", aLink, ExtractorLinkType.VIDEO, quality))
                 } else if (text.contains("FAST CLOUD", ignoreCase=true)) {
                     try {
+                        println("$tag GDFlix FastCloud fetching: $aLink")
                         val fastDoc = app.get(getProxiedUrl(aLink)).document
                         val fastLink = fastDoc.select("div.card-body a").attr("href")
+                        println("$tag GDFlix FastCloud link: '$fastLink'")
                         if (fastLink.isNotBlank()) {
                             callback(newExtractorLink(sourceTag, "$sourceTag FastCloud $fileName [$fileSize]", fastLink, ExtractorLinkType.VIDEO, quality))
+                        } else {
+                            println("$tag GDFlix FastCloud WARN: blank fastLink")
                         }
-                    } catch(e:Exception){}
+                    } catch(e: Exception) {
+                        println("$tag GDFlix FastCloud FAILED: ${e.message}")
+                    }
                 }
             }
+        } else {
+            println("$tag WARN: Link doesn't match any known branch: $link")
         }
+        println("$tag resolveVCloudOrGDFlix DONE for $link")
     }
 
 }
