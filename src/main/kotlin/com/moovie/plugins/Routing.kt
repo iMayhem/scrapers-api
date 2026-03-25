@@ -292,6 +292,16 @@ fun Application.configureRouting() {
               latencyMs: Long? = null,
               providerKey: String? = null,
               fileSizeGb: Double? = null,
+      ): JSONObject {
+        return JSONObject().apply {
+          put("server", server)
+          put("url", url)
+          put("type", type)
+          put("quality", quality)
+          if (headers != null) put("headers", JSONObject(headers))
+          if (latencyMs != null) put("latency", latencyMs)
+          if (providerKey != null) put("provider", providerKey)
+          if (fileSizeGb != null) put("fileSizeGb", fileSizeGb)
         }
       }
 
