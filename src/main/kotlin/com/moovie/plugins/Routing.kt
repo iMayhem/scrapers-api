@@ -517,34 +517,4 @@ fun Application.configureRouting() {
 }
 
 
-fun cinemaOSDecryptResponse(enc: String?): String? {
-  if (enc.isNullOrBlank()) return null
-  try {
-    val j = JSONObject(enc)
-    val pw = "a1b2c3d4e4f6477658455678901477567890abcdef1234567890abcdef123456"
-    val iv = hexToBytes(j.getString("cin"))
-    val tag = hexToBytes(j.getString("mao"))
-    val e = hexToBytes(j.getString("encrypted"))
-    val salt = hexToBytes(j.getString("salt"))
-    val k =
-            SecretKeySpec(
-                    SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-                            .generateSecret(PBEKeySpec(pw.toCharArray(), salt, 100000, 256))
-                            .encoded,
-                    "AES"
-            )
-    val c = Cipher.getInstance("AES/GCM/NoPadding")
-    c.init(Cipher.DECRYPT_MODE, k, GCMParameterSpec(128, iv))
-    return String(c.doFinal(e + tag), StandardCharsets.UTF_8)
-  } catch (_: Exception) {
-    return null
-  }
-}
 
-private fun hmac256(data: String, key: String): String {
-  val m = Mac.getInstance("HmacSHA256")
-  m.init(SecretKeySpec(key.toByteArray(), "HmacSHA256"))
-  return m.doFinal(data.toByteArray()).joinToString("") { "%02x".format(it) }
-}
-
-fun hexToBytes(hex: String): ByteArray = hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
