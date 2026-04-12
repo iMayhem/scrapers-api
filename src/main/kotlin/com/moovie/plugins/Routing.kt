@@ -477,6 +477,16 @@ fun Application.configureRouting() {
           reqBuilder.header("Referer", "https://vcloud.zip/")
           reqBuilder.header("Origin", "https://vcloud.zip")
       }
+
+      // MovieBox CDN (hakunaymatata.com / bcdnxw) — strip any third-party Referer/Origin
+      // The signed URLs are IP-locked; sending a foreign Referer causes 403
+      if (targetUrl.contains("hakunaymatata.com", ignoreCase = true) ||
+          targetUrl.contains("bcdnxw.", ignoreCase = true)) {
+          reqBuilder.removeHeader("Referer")
+          reqBuilder.removeHeader("Origin")
+          reqBuilder.removeHeader("User-Agent")
+          println("[PROXY] MovieBox CDN detected — stripped Referer/Origin/User-Agent")
+      }
       
       try {
           val response = client.newCall(reqBuilder.build()).execute()
