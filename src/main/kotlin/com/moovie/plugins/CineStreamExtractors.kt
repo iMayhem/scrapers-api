@@ -3,6 +3,7 @@ package com.moovie.plugins
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
+import kotlinx.coroutines.delay
 
 object CineStreamExtractors {
 
@@ -975,6 +976,28 @@ object CineStreamExtractors {
                     println("$tag FastDL WARN: could not extract direct URL from $scriptLink")
                 }
                 return
+            }
+
+            if (scriptLink.isBlank()) {
+                // Check if it's a "please wait" / rate-limit page — retry once after delay
+                val isWaitPage = doc.select("script").any { it.data().contains("location.reload") || it.data().contains("setTimeout") }
+                if (isWaitPage) {
+                    println("$tag Wait page detected, retrying after 3s...")
+                    delay(3000)
+                    val retryDoc = try {
+                        val resp = app.get(resolvedUrl)
+                        println("$tag Retry HTTP ${resp.code} for $link")
+                        resp.document
+                    } catch(e: Exception) {
+                        println("$tag Retry FAILED: ${e.message}")
+                        return
+                    }
+                    val retryScript = retryDoc.select("script:containsData(url)").firstOrNull()?.data() ?: ""
+                    scriptLink = Regex("var url = '([^']+)'").find(retryScript)?.groupValues?.get(1)
+                        ?: Regex("""var reurl = "([^"]+)"""").find(retryScript)?.groupValues?.get(1)
+                        ?: ""
+                    println("$tag Retry extracted scriptLink: '$scriptLink'")
+                }
             }
 
             if (scriptLink.isBlank()) {
