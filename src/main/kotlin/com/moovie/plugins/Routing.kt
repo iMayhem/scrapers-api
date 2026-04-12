@@ -469,6 +469,14 @@ fun Application.configureRouting() {
           reqBuilder.header("Origin", "https://filebee.xyz")
           reqBuilder.header("Referer", "https://filebee.xyz/")
       }
+
+      // HubCloud CDN servers (pizzacdn, shipcdn, hubcdn) require Referer from vcloud.zip
+      if (targetUrl.contains("pizzacdn.buzz", ignoreCase = true) ||
+          targetUrl.contains("shipcdn.buzz", ignoreCase = true) ||
+          targetUrl.contains("hubcdn.fans", ignoreCase = true)) {
+          reqBuilder.header("Referer", "https://vcloud.zip/")
+          reqBuilder.header("Origin", "https://vcloud.zip")
+      }
       
       try {
           val response = client.newCall(reqBuilder.build()).execute()
