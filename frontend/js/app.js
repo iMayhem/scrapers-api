@@ -201,7 +201,7 @@
   }
 
   function handleStreamEvent(evt) {
-    if (evt.msgType === "stream") {
+    if (evt && (evt.msgType === "stream" || evt.url)) {
       const s = evt;
       state.streams.push(s);
       const url = s.url || "";
