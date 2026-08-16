@@ -15,9 +15,9 @@ dependencies {
     implementation(project(":library"))
     implementation(project(":common"))
 
-    implementation("io.ktor:ktor-server-core-jvm:2.3.11")
-    implementation("io.ktor:ktor-server-cors-jvm:2.3.11")
-    implementation("io.ktor:ktor-server-netty-jvm:2.3.11")
+    implementation("io.ktor:ktor-server-core-jvm:3.2.0")
+    implementation("io.ktor:ktor-server-cors-jvm:3.2.0")
+    implementation("io.ktor:ktor-server-netty-jvm:3.2.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
     implementation("ch.qos.logback:logback-classic:1.5.6")
