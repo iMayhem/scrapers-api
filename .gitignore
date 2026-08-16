@@ -1,7 +1,9 @@
 build/
 .gradle/
-build_output*.txt
+plugins/
 *.class
 *.bin
 *.lock
 bin/
+*.log
+out.txt

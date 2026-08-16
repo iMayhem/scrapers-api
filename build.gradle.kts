@@ -1,43 +1,13 @@
 plugins {
-    kotlin("jvm") version "1.9.24"
-    id("io.ktor.plugin") version "2.3.11"
+    alias(libs.plugins.kotlin.jvm) apply false
+    alias(libs.plugins.kotlin.multiplatform) apply false
+    alias(libs.plugins.kotlin.serialization) apply false
+    alias(libs.plugins.buildkonfig) apply false
 }
 
-group = "com.moovie"
-version = "1.0-SNAPSHOT"
-
-application {
-    mainClass.set("com.moovie.ApplicationKt")
-}
-
-repositories {
-    mavenCentral()
-}
-
-dependencies {
-    implementation("io.ktor:ktor-server-core-jvm")
-    implementation("io.ktor:ktor-server-cors-jvm")
-    implementation("io.ktor:ktor-server-netty-jvm")
-    implementation("org.jsoup:jsoup:1.18.1")
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
-    implementation("ch.qos.logback:logback-classic:1.5.6")
-    implementation("org.json:json:20240303")
-    implementation("com.google.code.gson:gson:2.11.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
-}
-
-tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
-    kotlinOptions {
-        jvmTarget = "21"
+allprojects {
+    // https://docs.gradle.org/current/userguide/upgrading_major_version_9.html#test_task_fails_when_no_tests_are_discovered
+    tasks.withType<AbstractTestTask>().configureEach {
+        failOnNoDiscoveredTests = false
     }
-}
-
-tasks.register<JavaExec>("runDebugRog") {
-    group = "debug"
-    description = "Run the RogMovies debug scraper locally"
-    classpath = sourceSets["main"].runtimeClasspath
-    mainClass.set("com.moovie.DebugRogMoviesKt")
-    val proxy = System.getenv("SCRAPER_PROXY")?.takeIf { it.isNotEmpty() }
-    if (proxy != null) environment("SCRAPER_PROXY", proxy)
 }

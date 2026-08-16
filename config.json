@@ -1,0 +1,8 @@
+{
+  "repoUrl": "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/builds/repo.json",
+  "pluginsDir": "plugins",
+  "enabledProviders": [],
+  "disabledProviders": [],
+  "scrapeTimeoutSeconds": 90,
+  "preferHls": true
+}
