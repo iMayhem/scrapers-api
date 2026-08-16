@@ -5,6 +5,7 @@ import com.moovie.PluginManager
 import com.moovie.ScrapeService
 import io.ktor.http.*
 import io.ktor.server.application.*
+import io.ktor.server.http.content.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
@@ -12,6 +13,7 @@ import kotlinx.coroutines.*
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
+import java.io.File
 import java.nio.charset.StandardCharsets
 import java.security.SecureRandom
 import java.util.Base64
@@ -70,9 +72,15 @@ fun Application.configureRouting() {
         .build()
 
     routing {
-        get("/") {
+        // Frontend (static site)
+        val frontendDir = File(System.getenv("FRONTEND_DIR") ?: "frontend")
+        if (frontendDir.exists()) {
+            staticFiles("/", frontendDir, index = "index.html")
+        }
+
+        get("/api/status") {
             val providers = PluginManager.providers()
-            call.respondText("Moovie Scraper API is Live! ${providers.size} providers loaded from ${PluginManager.providers().size} plugins")
+            call.respondText("Moovie Scraper API is Live! ${providers.size} providers loaded")
         }
 
         get("/api/search") {

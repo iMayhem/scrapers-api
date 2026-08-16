@@ -20,6 +20,7 @@ COPY --from=build /app/server/build/install/server /app
 # Pull the latest scrapers from the phisher repo at image build time
 COPY scripts scripts
 COPY config.json config.json
+COPY frontend frontend
 RUN chmod +x scripts/update-plugins.sh && ./scripts/update-plugins.sh
 
 EXPOSE 8080

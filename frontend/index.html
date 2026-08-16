@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Moovie</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="logo">🎬 Moovie</div>
+    <div class="search">
+      <input id="searchInput" type="text" placeholder="Search movies & shows..." />
+      <select id="searchType">
+        <option value="movie">Movies</option>
+        <option value="tv">TV Shows</option>
+      </select>
+      <button id="searchBtn">Search</button>
+    </div>
+    <div class="status"><span id="backendStatus">connecting…</span></div>
+  </header>
+
+  <main>
+    <section id="homeSection">
+      <h2 id="homeTitle">Trending</h2>
+      <div class="tabs">
+        <button class="tab active" data-list="movie">Movies</button>
+        <button class="tab" data-list="tv">TV Shows</button>
+      </div>
+      <div id="results" class="grid"></div>
+    </section>
+
+    <!-- Detail + Scrape modal -->
+    <div id="modal" class="modal hidden">
+      <div class="modal-content">
+        <div class="modal-head">
+          <img id="mPoster" class="m-poster" alt="" />
+          <div class="m-info">
+            <h2 id="mTitle"></h2>
+            <p id="mMeta" class="m-meta"></p>
+            <p id="mOverview" class="m-overview"></p>
+            <div id="episodePicker" class="hidden">
+              <select id="seasonSelect"></select>
+              <select id="episodeSelect"></select>
+              <button id="episodeGo">Load Episode</button>
+            </div>
+            <button id="scrapeBtn" class="btn primary">🔍 Find Streams</button>
+            <button id="closeModal" class="btn">✕ Close</button>
+          </div>
+        </div>
+
+        <div class="modal-body">
+          <div id="logPanel" class="log-panel">
+            <h3>📡 Live link fetch log</h3>
+            <div id="logLines" class="log-lines"></div>
+          </div>
+          <div id="streamsPanel" class="streams-panel">
+            <h3>🎯 Found streams <span id="streamCount"></span></h3>
+            <div id="streamList" class="stream-list"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Player modal -->
+    <div id="playerModal" class="modal hidden">
+      <div class="modal-content player-content">
+        <div class="player-head">
+          <h3 id="playerTitle"></h3>
+          <button id="closePlayer" class="btn">✕</button>
+        </div>
+        <div id="playerWrap" class="player-wrap">
+          <video id="html5Player" controls autoplay playsinline></video>
+        </div>
+        <p id="playerStatus" class="player-status"></p>
+      </div>
+    </div>
+  </main>
+
+  <script src="config.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
