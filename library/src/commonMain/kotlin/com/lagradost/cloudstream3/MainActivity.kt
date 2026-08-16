@@ -38,3 +38,15 @@ var app = Requests(responseParser = jsonResponseParser).apply {
 var insecureApp = Requests(responseParser = jsonResponseParser).apply {
     defaultHeaders = mapOf("user-agent" to USER_AGENT)
 }
+
+/** Minimal class so dex-transpiled plugins referencing MainActivity.Companion can load. */
+class MainActivity private constructor() {
+    companion object {
+        @JvmField
+        var appContext: Any? = null
+
+        private val bookmarksUpdatedEvent = com.lagradost.cloudstream3.utils.Event<Any?>()
+
+        fun getBookmarksUpdatedEvent(): com.lagradost.cloudstream3.utils.Event<*> = bookmarksUpdatedEvent
+    }
+}

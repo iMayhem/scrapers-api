@@ -8,6 +8,31 @@ class SafePluginClassLoader(parent: ClassLoader) : ClassLoader(parent) {
         if (isBlocked(name)) {
             throw SecurityException("Security Sandbox: Access to class '$name' is blocked.")
         }
+        // Old plugins were compiled against kotlinx-coroutines that still had the
+        // internal BuildersKt.runBlockingK, removed in newer versions. Provide a
+        // compat BuildersKt that forwards to the real implementation.
+        if (name == "kotlinx.coroutines.BuildersKt") {
+            val real = try { super.loadClass(name, false) } catch (e: ClassNotFoundException) { null }
+            if (real != null) {
+                if (real.declaredMethods.none { it.name == "runBlockingK" }) {
+                    return defineBuildersKtCompat(real)
+                }
+                return real
+            }
+        }
+        // Older kotlinc mangled inline functions as name_<suffix> (underscore);
+        // newer kotlinx-coroutines ships name-<suffix> (hyphen). Expose the old
+        // underscore spellings as aliases on a generated compat class.
+        if (name.startsWith("kotlinx.coroutines.")) {
+            val real = try { super.loadClass(name, false) } catch (e: ClassNotFoundException) { null }
+            if (real != null) {
+                val hyphenMethods = real.declaredMethods.filter { java.lang.reflect.Modifier.isStatic(it.modifiers) && it.name.contains('-') }
+                if (hyphenMethods.isNotEmpty()) {
+                    return defineMangledCompat(real, name.replace('.', '/'), hyphenMethods)
+                }
+                return real
+            }
+        }
         return try {
             super.loadClass(name, resolve)
         } catch (e: ClassNotFoundException) {
@@ -18,6 +43,227 @@ class SafePluginClassLoader(parent: ClassLoader) : ClassLoader(parent) {
                 throw e
             }
         }
+    }
+
+    // ── kotlinx.coroutines compat layer ──────────────────────────────────
+    private fun defineBuildersKtCompat(real: Class<*>): Class<*> {
+        val internalName = "kotlinx/coroutines/BuildersKt"
+        val cw = newCompatClassWriter(internalName)
+        for (m in real.declaredMethods) {
+            if (!java.lang.reflect.Modifier.isStatic(m.modifiers) || m.name == "runBlockingK") continue
+            emitCompatForwarder(cw, internalName, m)
+        }
+        emitRunBlockingK(cw)
+        emitRunBlockingKDefault(cw)
+        return finishCompatClass(internalName, cw)
+    }
+
+    private fun defineMangledCompat(real: Class<*>, internalName: String, hyphenMethods: List<java.lang.reflect.Method>): Class<*> {
+        val cw = newCompatClassWriter(internalName)
+        for (m in real.declaredMethods) {
+            if (!java.lang.reflect.Modifier.isStatic(m.modifiers)) continue
+            emitCompatForwarder(cw, internalName, m)
+        }
+        for (m in hyphenMethods) {
+            emitUnderscoreAlias(cw, m)
+        }
+        return finishCompatClass(internalName, cw)
+    }
+
+    private fun emitUnderscoreAlias(cw: org.objectweb.asm.ClassWriter, m: java.lang.reflect.Method) {
+        val argTypes = m.parameterTypes.map { org.objectweb.asm.Type.getType(it) }.toTypedArray()
+        val retType = org.objectweb.asm.Type.getType(m.returnType)
+        val desc = org.objectweb.asm.Type.getMethodDescriptor(retType, *argTypes)
+
+        val mv = cw.visitMethod(
+            org.objectweb.asm.Opcodes.ACC_PUBLIC + org.objectweb.asm.Opcodes.ACC_STATIC,
+            m.name.replace('-', '_'), desc, null, null
+        )
+        mv.visitCode()
+        var slot = 0
+        for (t in argTypes) {
+            mv.visitVarInsn(loadOpcode(t), slot)
+            if (t.sort == org.objectweb.asm.Type.LONG || t.sort == org.objectweb.asm.Type.DOUBLE) slot += 2 else slot++
+        }
+        mv.visitMethodInsn(
+            org.objectweb.asm.Opcodes.INVOKESTATIC,
+            "kotlinx/coroutines/" + m.declaringClass.simpleName,
+            m.name,
+            desc,
+            false
+        )
+        when (retType.sort) {
+            org.objectweb.asm.Type.VOID -> mv.visitInsn(org.objectweb.asm.Opcodes.RETURN)
+            org.objectweb.asm.Type.LONG -> mv.visitInsn(org.objectweb.asm.Opcodes.LRETURN)
+            org.objectweb.asm.Type.DOUBLE -> mv.visitInsn(org.objectweb.asm.Opcodes.DRETURN)
+            org.objectweb.asm.Type.FLOAT -> mv.visitInsn(org.objectweb.asm.Opcodes.FRETURN)
+            org.objectweb.asm.Type.INT -> mv.visitInsn(org.objectweb.asm.Opcodes.IRETURN)
+            org.objectweb.asm.Type.BOOLEAN -> mv.visitInsn(org.objectweb.asm.Opcodes.IRETURN)
+            else -> mv.visitInsn(org.objectweb.asm.Opcodes.ARETURN)
+        }
+        mv.visitMaxs(slot.coerceAtLeast(1), slot.coerceAtLeast(1))
+        mv.visitEnd()
+    }
+
+    private fun newCompatClassWriter(internalName: String): org.objectweb.asm.ClassWriter {
+        val cw = org.objectweb.asm.ClassWriter(0)
+        cw.visit(
+            org.objectweb.asm.Opcodes.V1_8,
+            org.objectweb.asm.Opcodes.ACC_PUBLIC + org.objectweb.asm.Opcodes.ACC_FINAL,
+            internalName,
+            null,
+            "java/lang/Object",
+            null
+        )
+
+        // private constructor
+        val ctor = cw.visitMethod(org.objectweb.asm.Opcodes.ACC_PRIVATE, "<init>", "()V", null, null)
+        ctor.visitCode()
+        ctor.visitVarInsn(org.objectweb.asm.Opcodes.ALOAD, 0)
+        ctor.visitMethodInsn(org.objectweb.asm.Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false)
+        ctor.visitInsn(org.objectweb.asm.Opcodes.RETURN)
+        ctor.visitMaxs(1, 1)
+        ctor.visitEnd()
+        return cw
+    }
+
+    private fun finishCompatClass(internalName: String, cw: org.objectweb.asm.ClassWriter): Class<*> {
+        cw.visitEnd()
+        val bytecode = cw.toByteArray()
+        val clazz = defineClass(internalName.replace('/', '.'), bytecode, 0, bytecode.size)
+        compatCache[internalName] = clazz
+        return clazz
+    }
+
+    private fun emitRunBlockingK(cw: org.objectweb.asm.ClassWriter) {
+        val desc = "(Lkotlin/coroutines/CoroutineContext;Lkotlin/jvm/functions/Function2;)Ljava/lang/Object;"
+        val mv = cw.visitMethod(
+            org.objectweb.asm.Opcodes.ACC_PUBLIC + org.objectweb.asm.Opcodes.ACC_STATIC,
+            "runBlockingK", desc, null, null
+        )
+        mv.visitCode()
+        mv.visitVarInsn(org.objectweb.asm.Opcodes.ALOAD, 0)
+        mv.visitVarInsn(org.objectweb.asm.Opcodes.ALOAD, 1)
+        mv.visitMethodInsn(
+            org.objectweb.asm.Opcodes.INVOKESTATIC,
+            "com/lagradost/runtime/loader/CoroutinesCompat",
+            "runBlocking",
+            "(Lkotlin/coroutines/CoroutineContext;Lkotlin/jvm/functions/Function2;)Ljava/lang/Object;",
+            false
+        )
+        mv.visitInsn(org.objectweb.asm.Opcodes.ARETURN)
+        mv.visitMaxs(2, 2)
+        mv.visitEnd()
+    }
+
+    private fun emitRunBlockingKDefault(cw: org.objectweb.asm.ClassWriter) {
+        // Kotlin default-args wrapper referenced by dex-transpiled plugins:
+        // runBlockingK$default(CoroutineContext, Function2, int, Object)
+        val desc = "(Lkotlin/coroutines/CoroutineContext;Lkotlin/jvm/functions/Function2;ILjava/lang/Object;)Ljava/lang/Object;"
+        val mv = cw.visitMethod(
+            org.objectweb.asm.Opcodes.ACC_PUBLIC + org.objectweb.asm.Opcodes.ACC_STATIC,
+            "runBlockingK\$default", desc, null, null
+        )
+        mv.visitCode()
+        mv.visitVarInsn(org.objectweb.asm.Opcodes.ALOAD, 0)
+        mv.visitVarInsn(org.objectweb.asm.Opcodes.ALOAD, 1)
+        mv.visitMethodInsn(
+            org.objectweb.asm.Opcodes.INVOKESTATIC,
+            "com/lagradost/runtime/loader/CoroutinesCompat",
+            "runBlocking",
+            "(Lkotlin/coroutines/CoroutineContext;Lkotlin/jvm/functions/Function2;)Ljava/lang/Object;",
+            false
+        )
+        mv.visitInsn(org.objectweb.asm.Opcodes.ARETURN)
+        mv.visitMaxs(2, 4)
+        mv.visitEnd()
+    }
+
+    private fun emitCompatForwarder(cw: org.objectweb.asm.ClassWriter, ownerInternalName: String, m: java.lang.reflect.Method) {
+        val op = org.objectweb.asm.Opcodes.ACC_PUBLIC + org.objectweb.asm.Opcodes.ACC_STATIC
+        val argTypes = m.parameterTypes.map { org.objectweb.asm.Type.getType(it) }.toTypedArray()
+        val retType = org.objectweb.asm.Type.getType(m.returnType)
+        val desc = org.objectweb.asm.Type.getMethodDescriptor(retType, *argTypes)
+
+        val mv = cw.visitMethod(op, m.name, desc, null, null)
+        mv.visitCode()
+
+        // push owner, methodName, desc first (invokeStatic(owner, name, desc, args))
+        mv.visitLdcInsn(ownerInternalName.replace('/', '.'))
+        mv.visitLdcInsn(m.name)
+        mv.visitLdcInsn(desc)
+
+        // build Object[] args array (last parameter, stays on top of the stack)
+        mv.visitLdcInsn(argTypes.size)
+        mv.visitTypeInsn(org.objectweb.asm.Opcodes.ANEWARRAY, "java/lang/Object")
+        var slot = 0
+        for (i in argTypes.indices) {
+            val t = argTypes[i]
+            mv.visitInsn(org.objectweb.asm.Opcodes.DUP)
+            mv.visitLdcInsn(i)
+            mv.visitVarInsn(loadOpcode(t), slot)
+            if (t.sort == org.objectweb.asm.Type.LONG || t.sort == org.objectweb.asm.Type.DOUBLE) slot += 2 else slot++
+            if (t.sort != org.objectweb.asm.Type.OBJECT && t.sort != org.objectweb.asm.Type.ARRAY) {
+                val boxed = boxInternalName(t)
+                mv.visitMethodInsn(org.objectweb.asm.Opcodes.INVOKESTATIC, boxed, "valueOf", "(" + t.descriptor + ")L" + boxed + ";", false)
+            }
+            mv.visitInsn(org.objectweb.asm.Opcodes.AASTORE)
+        }
+
+        mv.visitMethodInsn(
+            org.objectweb.asm.Opcodes.INVOKESTATIC,
+            "com/lagradost/runtime/loader/CoroutinesCompat",
+            "invokeStatic",
+            "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;[Ljava/lang/Object;)Ljava/lang/Object;",
+            false
+        )
+
+        when (retType.sort) {
+            org.objectweb.asm.Type.VOID -> mv.visitInsn(org.objectweb.asm.Opcodes.POP)
+            org.objectweb.asm.Type.BOOLEAN -> { mv.visitTypeInsn(org.objectweb.asm.Opcodes.CHECKCAST, "java/lang/Boolean"); mv.visitMethodInsn(org.objectweb.asm.Opcodes.INVOKEVIRTUAL, "java/lang/Boolean", "booleanValue", "()Z", false); mv.visitInsn(org.objectweb.asm.Opcodes.IRETURN) }
+            org.objectweb.asm.Type.BYTE -> { mv.visitTypeInsn(org.objectweb.asm.Opcodes.CHECKCAST, "java/lang/Byte"); mv.visitMethodInsn(org.objectweb.asm.Opcodes.INVOKEVIRTUAL, "java/lang/Byte", "byteValue", "()B", false); mv.visitInsn(org.objectweb.asm.Opcodes.IRETURN) }
+            org.objectweb.asm.Type.CHAR -> { mv.visitTypeInsn(org.objectweb.asm.Opcodes.CHECKCAST, "java/lang/Character"); mv.visitMethodInsn(org.objectweb.asm.Opcodes.INVOKEVIRTUAL, "java/lang/Character", "charValue", "()C", false); mv.visitInsn(org.objectweb.asm.Opcodes.IRETURN) }
+            org.objectweb.asm.Type.SHORT -> { mv.visitTypeInsn(org.objectweb.asm.Opcodes.CHECKCAST, "java/lang/Short"); mv.visitMethodInsn(org.objectweb.asm.Opcodes.INVOKEVIRTUAL, "java/lang/Short", "shortValue", "()S", false); mv.visitInsn(org.objectweb.asm.Opcodes.IRETURN) }
+            org.objectweb.asm.Type.INT -> { mv.visitTypeInsn(org.objectweb.asm.Opcodes.CHECKCAST, "java/lang/Integer"); mv.visitMethodInsn(org.objectweb.asm.Opcodes.INVOKEVIRTUAL, "java/lang/Integer", "intValue", "()I", false); mv.visitInsn(org.objectweb.asm.Opcodes.IRETURN) }
+            org.objectweb.asm.Type.LONG -> { mv.visitTypeInsn(org.objectweb.asm.Opcodes.CHECKCAST, "java/lang/Long"); mv.visitMethodInsn(org.objectweb.asm.Opcodes.INVOKEVIRTUAL, "java/lang/Long", "longValue", "()J", false); mv.visitInsn(org.objectweb.asm.Opcodes.LRETURN) }
+            org.objectweb.asm.Type.FLOAT -> { mv.visitTypeInsn(org.objectweb.asm.Opcodes.CHECKCAST, "java/lang/Float"); mv.visitMethodInsn(org.objectweb.asm.Opcodes.INVOKEVIRTUAL, "java/lang/Float", "floatValue", "()F", false); mv.visitInsn(org.objectweb.asm.Opcodes.FRETURN) }
+            org.objectweb.asm.Type.DOUBLE -> { mv.visitTypeInsn(org.objectweb.asm.Opcodes.CHECKCAST, "java/lang/Double"); mv.visitMethodInsn(org.objectweb.asm.Opcodes.INVOKEVIRTUAL, "java/lang/Double", "doubleValue", "()D", false); mv.visitInsn(org.objectweb.asm.Opcodes.DRETURN) }
+            else -> {
+                if (retType.sort == org.objectweb.asm.Type.OBJECT && retType.internalName != "java/lang/Object") {
+                    mv.visitTypeInsn(org.objectweb.asm.Opcodes.CHECKCAST, retType.internalName)
+                } else if (retType.sort == org.objectweb.asm.Type.ARRAY) {
+                    mv.visitTypeInsn(org.objectweb.asm.Opcodes.CHECKCAST, retType.descriptor)
+                }
+                mv.visitInsn(org.objectweb.asm.Opcodes.ARETURN)
+            }
+        }
+        mv.visitMaxs(argTypes.size * 2 + 6, slot)
+        mv.visitEnd()
+    }
+
+    private fun loadOpcode(t: org.objectweb.asm.Type): Int = when (t.sort) {
+        org.objectweb.asm.Type.BOOLEAN, org.objectweb.asm.Type.BYTE, org.objectweb.asm.Type.CHAR,
+        org.objectweb.asm.Type.SHORT, org.objectweb.asm.Type.INT -> org.objectweb.asm.Opcodes.ILOAD
+        org.objectweb.asm.Type.LONG -> org.objectweb.asm.Opcodes.LLOAD
+        org.objectweb.asm.Type.FLOAT -> org.objectweb.asm.Opcodes.FLOAD
+        org.objectweb.asm.Type.DOUBLE -> org.objectweb.asm.Opcodes.DLOAD
+        else -> org.objectweb.asm.Opcodes.ALOAD
+    }
+
+    private fun boxInternalName(t: org.objectweb.asm.Type): String = when (t.sort) {
+        org.objectweb.asm.Type.BOOLEAN -> "java/lang/Boolean"
+        org.objectweb.asm.Type.BYTE -> "java/lang/Byte"
+        org.objectweb.asm.Type.CHAR -> "java/lang/Character"
+        org.objectweb.asm.Type.SHORT -> "java/lang/Short"
+        org.objectweb.asm.Type.INT -> "java/lang/Integer"
+        org.objectweb.asm.Type.LONG -> "java/lang/Long"
+        org.objectweb.asm.Type.FLOAT -> "java/lang/Float"
+        org.objectweb.asm.Type.DOUBLE -> "java/lang/Double"
+        else -> "java/lang/Object"
+    }
+
+    companion object {
+        private val compatCache = java.util.concurrent.ConcurrentHashMap<String, Class<*>>()
     }
 
     private fun generateGhostStub(name: String): Class<*> {
@@ -105,6 +351,11 @@ class SafePluginClassLoader(parent: ClassLoader) : ClassLoader(parent) {
         // Block file system access, but allow benign streams/readers/writers
         if (name.startsWith("java.io.")) {
             val safeIo = setOf(
+                "java.io.File",
+                "java.io.FileInputStream",
+                "java.io.FileOutputStream",
+                "java.io.FileReader",
+                "java.io.FileWriter",
                 "java.io.InputStream",
                 "java.io.OutputStream",
                 "java.io.ByteArrayInputStream",
@@ -139,9 +390,30 @@ class SafePluginClassLoader(parent: ClassLoader) : ClassLoader(parent) {
             }
         }
 
-        // Block unsafe NIO (channels, files) but allow buffers and charsets
+        // Allow NIO file APIs (plugins like Ultima download plugins at runtime),
+        // but keep blocking raw channels/sockets and other unsafe NIO.
         if (name.startsWith("java.nio.")) {
-            if (!name.startsWith("java.nio.charset.") && !name.contains("Buffer")) {
+            val safeNio = setOf(
+                "java.nio.file.Files",
+                "java.nio.file.Path",
+                "java.nio.file.Paths",
+                "java.nio.file.StandardCopyOption",
+                "java.nio.file.StandardOpenOption",
+                "java.nio.file.OpenOption",
+                "java.nio.file.CopyOption",
+                "java.nio.file.LinkOption",
+                "java.nio.file.FileVisitResult",
+                "java.nio.file.FileVisitor",
+                "java.nio.file.SimpleFileVisitor",
+                "java.nio.file.attribute.FileAttribute",
+                "java.nio.file.attribute.BasicFileAttributes",
+                "java.nio.file.attribute.FileTime",
+                "java.nio.file.attribute.PosixFilePermission",
+                "java.nio.file.attribute.PosixFilePermissions"
+            )
+            if (name.startsWith("java.nio.file.") && name in safeNio) {
+                // allowed
+            } else if (!name.startsWith("java.nio.charset.") && !name.contains("Buffer")) {
                 return true
             }
         }
@@ -151,9 +423,23 @@ class SafePluginClassLoader(parent: ClassLoader) : ClassLoader(parent) {
             return true
         }
 
-        // Block reflection to prevent sandbox escape
+        // Allow benign reflection (plugins like Ultima read their own fields),
+        // keep blocking proxies/invocation handlers and the rest
         if (name.startsWith("java.lang.reflect.")) {
-            return true
+            val safeReflect = setOf(
+                "java.lang.reflect.Field",
+                "java.lang.reflect.Method",
+                "java.lang.reflect.Constructor",
+                "java.lang.reflect.Modifier",
+                "java.lang.reflect.Array",
+                "java.lang.reflect.Parameter",
+                "java.lang.reflect.Type",
+                "java.lang.reflect.GenericDeclaration",
+                "java.lang.reflect.AnnotatedElement"
+            )
+            if (!safeReflect.contains(name)) {
+                return true
+            }
         }
 
         // Block method handles but ALLOW LambdaMetafactory and StringConcatFactory required for Java 8+ lambdas

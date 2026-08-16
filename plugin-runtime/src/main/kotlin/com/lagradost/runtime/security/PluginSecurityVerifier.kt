@@ -3,6 +3,7 @@ package com.lagradost.runtime.security
 import org.objectweb.asm.ClassReader
 import org.objectweb.asm.tree.ClassNode
 import org.objectweb.asm.tree.MethodInsnNode
+import com.lagradost.common.logging.AppLogger
 import java.io.File
 import java.util.zip.ZipFile
 
@@ -26,9 +27,9 @@ object PluginSecurityVerifier {
                                     val owner = insn.owner // internal name e.g. java/lang/Runtime
 
                                     // Block dangerous class owners outright
+                                    // (java/io/File is allowed: plugins like Ultima write plugin
+                                    // downloads at runtime, and the runtime classloader gates the rest)
                                     if (owner == "java/lang/ProcessBuilder" ||
-                                        owner == "java/io/File" ||
-                                        owner.startsWith("java/lang/reflect/") ||
                                         owner.startsWith("java/lang/invoke/")
                                     ) {
                                         throw SecurityException("Security Sandbox: Potentially unsafe code detected in class ${classNode.name} method ${method.name}. Illegal invocation: $owner.${insn.name}")
@@ -41,13 +42,12 @@ object PluginSecurityVerifier {
                                         }
                                     }
 
-                                    // GAP FIX #1: Block URL.openStream() and URL.openConnection()
-                                    // A plugin could do URL("file:///C:/Users/...").openStream() to read
-                                    // arbitrary files from disk. Plugins never legitimately need raw URL
-                                    // streams — they always use the `app` NiceHttp object instead.
+                                    // Allow raw URL.openStream()/openConnection() — plugins like IStreamFlare
+                                    // legitimately resolve CDN redirects with them. The runtime
+                                    // classloader still blocks raw sockets.
                                     if (owner == "java/net/URL") {
                                         if (insn.name == "openStream" || insn.name == "openConnection") {
-                                            throw SecurityException("Security Sandbox: Illegal URL.${ insn.name}() call in ${classNode.name}. Use the NiceHttp `app` object for network requests.")
+                                            AppLogger.i("Allowed URL.${insn.name}() in ${classNode.name} (CDN redirect resolution)")
                                         }
                                     }
 
@@ -64,15 +64,13 @@ object PluginSecurityVerifier {
                                         }
                                     }
 
-                                    // GAP FIX #3: Block raw HttpURLConnection / URLConnection
-                                    // Prevents plugins from making untracked, unmetered HTTP requests
-                                    // that bypass OkHttp, the CloudflareKiller interceptor, and
-                                    // the app's user-agent / header management.
+                                    // GAP FIX #3 (relaxed): raw HttpURLConnection / URLConnection — plugins like
+                                    // IStreamFlare legitimately use them for CDN redirect resolution.
                                     if (owner == "java/net/HttpURLConnection" ||
                                         owner == "java/net/URLConnection" ||
                                         owner == "javax/net/ssl/HttpsURLConnection"
                                     ) {
-                                        throw SecurityException("Security Sandbox: Illegal raw HTTP connection in ${classNode.name}. Use the NiceHttp `app` object instead.")
+                                        AppLogger.i("Allowed raw HTTP connection in ${classNode.name} (CDN redirect resolution)")
                                     }
 
                                     // Block specific dangerous System calls

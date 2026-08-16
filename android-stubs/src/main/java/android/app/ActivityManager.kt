@@ -4,9 +4,13 @@ package android.app
 class ActivityManager {
 
     class MemoryInfo {
+        @JvmField
         var totalMem: Long = 0L
+        @JvmField
         var availMem: Long = 0L
+        @JvmField
         var threshold: Long = 0L
+        @JvmField
         var lowMemory: Boolean = false
     }
 

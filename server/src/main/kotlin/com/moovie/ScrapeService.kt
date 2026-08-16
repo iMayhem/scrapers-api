@@ -24,7 +24,7 @@ object ScrapeService {
             .build()
     }
 
-    private val semaphore = Semaphore(4)
+    private val semaphore = Semaphore(10)
 
     // ── Search ────────────────────────────────────────────────────────────
     suspend fun search(query: String, type: String): JSONArray {
@@ -190,8 +190,8 @@ object ScrapeService {
         episode: Int?,
         onLink: suspend (String, ExtractorLink) -> Unit,
     ) {
-        val results = provider.search(title) ?: return
-        val match = results.minByOrNull { similarity(title, it.name) } ?: return
+        val results = provider.search(title, 1) ?: return
+        val match = results.items.minByOrNull { similarity(title, it.name) } ?: return
         if (similarity(title, match.name) < 0.45) return
 
         val load = provider.load(match.url) ?: return

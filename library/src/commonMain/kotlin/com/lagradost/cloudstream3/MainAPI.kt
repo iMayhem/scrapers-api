@@ -638,12 +638,12 @@ abstract class MainAPI {
 
     // @WorkerThread
     open suspend fun search(query: String): List<SearchResponse>? {
-        throw NotImplementedError()
+        return null
     }
 
     // @WorkerThread
     open suspend fun quickSearch(query: String): List<SearchResponse>? {
-        throw NotImplementedError()
+        return null
     }
 
     // @WorkerThread

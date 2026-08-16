@@ -98,6 +98,10 @@ object ExtensionLoader {
         }
 
         if (pluginClassName == null) {
+            pluginClassName = discoverPluginClassName(jarToLoad)
+        }
+
+        if (pluginClassName == null) {
             throw IllegalArgumentException("Could not determine pluginClassName from manifest.json and no fallback provided.")
         }
 
@@ -143,6 +147,51 @@ object ExtensionLoader {
         plugins[jarFile.absolutePath] = pluginInstance
 
         return pluginInstance
+    }
+
+    /**
+     * JVM build jars from the phisher repo have no manifest.json, so the plugin
+     * class has to be discovered: scan the jar for classes, prefer simple names
+     * ending in "Plugin", and pick the first that extends BasePlugin.
+     */
+    private fun discoverPluginClassName(jarFile: File): String? {
+        val candidates = mutableListOf<String>()
+        try {
+            ZipFile(jarFile).use { zip ->
+                val entries = zip.entries()
+                while (entries.hasMoreElements()) {
+                    val entry = entries.nextElement()
+                    if (entry.name.endsWith(".class") && !entry.name.contains('$') && !entry.name.startsWith("META-INF")) {
+                        candidates.add(entry.name.removeSuffix(".class").replace('/', '.'))
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            return null
+        }
+        if (candidates.isEmpty()) return null
+
+        candidates.sortWith(compareBy({ !it.substringAfterLast('.').endsWith("Plugin") }, { it }))
+
+        val trialLoader = URLClassLoader(
+            arrayOf(jarFile.toURI().toURL()),
+            SafePluginClassLoader(this::class.java.classLoader)
+        )
+        for (className in candidates) {
+            try {
+                val clazz = trialLoader.loadClass(className)
+                if (BasePlugin::class.java.isAssignableFrom(clazz) &&
+                    !clazz.isInterface &&
+                    !java.lang.reflect.Modifier.isAbstract(clazz.modifiers)
+                ) {
+                    AppLogger.i("Discovered plugin class $className for ${jarFile.name}")
+                    return className
+                }
+            } catch (e: Throwable) {
+                // skip classes that fail to load (missing stubs, sandbox blocks, etc.)
+            }
+        }
+        return null
     }
 
     private fun getTrustedList(): MutableList<String> {
@@ -263,7 +312,7 @@ object ExtensionLoader {
                         loaded++
                         AppLogger.i("Rescan: loaded ${jar.name}")
                     } catch (e: Throwable) {
-                        AppLogger.i("Rescan: failed ${jar.name}: ${e.message}")
+                        AppLogger.i("Rescan: failed ${jar.name}: ${e.message}\n${e.stackTraceToString().take(2000)}")
                     }
                 }
             }

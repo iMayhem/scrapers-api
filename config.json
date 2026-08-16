@@ -3,6 +3,6 @@
   "pluginsDir": "plugins",
   "enabledProviders": [],
   "disabledProviders": [],
-  "scrapeTimeoutSeconds": 90,
+  "scrapeTimeoutSeconds": 30,
   "preferHls": true
 }
