@@ -15,6 +15,8 @@
     episode: 1,
     scraping: false,
     abort: null,
+    streams: [], // collected during scrape
+    manualPlay: false, // user already picked a stream
   };
 
   // ── TMDB helpers ────────────────────────────────────────────────────────
@@ -143,6 +145,8 @@
     state.scraping = true;
     $("scrapeBtn").disabled = true;
     $("scrapeBtn").textContent = "⏳ Scraping…";
+    state.streams = [];
+    state.manualPlay = false;
     clearLog();
     clearStreams();
     $("streamCount").textContent = "";
@@ -185,6 +189,7 @@
         }
       }
       logLine(`✅ Scrape finished. ${count} link(s) found.`, "link");
+      autoPlayBest();
     } catch (e) {
       if (e.name !== "AbortError") logLine(`❌ Scrape failed: ${e.message}`, "err");
     } finally {
@@ -198,10 +203,28 @@
   function handleStreamEvent(evt) {
     if (evt.msgType === "stream") {
       const s = evt;
+      state.streams.push(s);
       const url = s.url || "";
       logLine(`▶ [${s.type || "?"}] ${s.quality || "Auto"} — ${s.server || "?"}`, "link");
       addStreamCard(s);
     }
+  }
+
+  // Auto-play the best stream once scraping finishes (unless user picked one)
+  function pickBest(list) {
+    const rank = (s) => {
+      const q = parseInt(s.quality, 10) || 0;
+      const t = s.type === "hls" ? 1000 : s.type === "dash" ? 800 : 500;
+      return t + q;
+    };
+    return [...list].sort((a, b) => rank(b) - rank(a))[0];
+  }
+
+  function autoPlayBest() {
+    if (state.manualPlay || !state.streams.length) return;
+    const best = pickBest(state.streams);
+    logLine(`▶ Auto-playing best stream: ${best.quality || "Auto"} — ${best.server}`, "link");
+    play(best);
   }
 
   function addStreamCard(s) {
@@ -226,6 +249,7 @@
 
   // ── Playback (JW Player or HTML5, via backend proxy token) ─────────────
   async function play(stream) {
+    state.manualPlay = true;
     $("playerTitle").textContent = `${stream.server} — ${stream.quality || "Auto"}`;
     $("playerModal").classList.remove("hidden");
     $("playerStatus").textContent = "Minting proxy token…";
@@ -261,6 +285,7 @@
         width: "100%",
         aspectratio: "16:9",
         primary: "html5",
+        autostart: true,
       });
     } else {
       const video = document.createElement("video");
@@ -269,6 +294,15 @@
       video.playsInline = true;
       video.src = url;
       wrap.appendChild(video);
+      const play = video.play();
+      if (play) {
+        play.catch(() => {
+          // Browser blocked unmuted autoplay — restart muted, offer unmute
+          video.muted = true;
+          video.play().catch(() => {});
+          $("playerStatus").textContent = "Autoplay blocked — tap play in the player.";
+        });
+      }
     }
   }
 
